@@ -1,0 +1,22 @@
+{
+  "name": "keyfall",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Typing as a real-time game mechanic, with typing skill modelled as a motor profile",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @keyfall/web",
+    "build": "npm run build --workspace @keyfall/web",
+    "preview": "npm run preview --workspace @keyfall/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
