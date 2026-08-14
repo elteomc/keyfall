@@ -321,6 +321,77 @@ describe('RunSession', () => {
     expect(run.session.comboTier()).not.toBe('flat')
   })
 
+  test('a wrong key on a shield loses the whole word, not one character', () => {
+    const run = driver()
+    run.advance(4000)
+
+    const shield: Enemy = { ...fakeEnemy('s', 'kernel', 200), kind: 'shield' }
+    run.session.enemies = [shield]
+
+    run.type('kern')
+    expect(shield.typed).toBe(4)
+
+    run.type('x')
+    expect(shield.typed).toBe(0)
+    expect(run.session.lockedId).toBe('s')
+
+    // The word is still killable, it just has to be earned again.
+    run.type('kernel')
+    expect(run.session.kills).toBe(1)
+  })
+
+  test('a wrong key on any other archetype keeps the progress', () => {
+    const run = driver()
+    run.advance(4000)
+
+    const drone: Enemy = { ...fakeEnemy('d', 'kernel', 200), kind: 'drone' }
+    run.session.enemies = [drone]
+
+    run.type('kern')
+    run.type('x')
+    expect(drone.typed).toBe(4)
+  })
+
+  test('a sprinter carries a short word and outruns a tank', () => {
+    const run = driver(3)
+    run.advance(4000)
+
+    const speeds: Partial<Record<string, number>> = {}
+    const lengths: Partial<Record<string, number>> = {}
+    for (let tick = 0; tick < 600; tick++) {
+      run.advance(120)
+      for (const enemy of run.session.enemies) {
+        speeds[enemy.kind] = Math.max(speeds[enemy.kind] ?? 0, enemy.speed)
+        lengths[enemy.kind] = Math.max(lengths[enemy.kind] ?? 0, enemy.word.length)
+      }
+      // A player who clears everything, so the director sees low pressure and
+      // the run is allowed to get harder.
+      run.session.enemies = []
+    }
+
+    expect(speeds.sprinter).toBeGreaterThan(speeds.tank!)
+    expect(lengths.sprinter!).toBeLessThan(lengths.tank!)
+  })
+
+  test('the director opens easy and every archetype eventually appears', () => {
+    const run = driver(3)
+    const early = new Set<string>()
+    const all = new Set<string>()
+
+    for (let tick = 0; tick < 600; tick++) {
+      run.advance(120)
+      for (const enemy of run.session.enemies) {
+        all.add(enemy.kind)
+        if (run.session.elapsedMs < 10000) early.add(enemy.kind)
+      }
+      run.session.enemies = []
+    }
+
+    expect([...early]).toEqual(['drone'])
+    expect([...all].sort()).toEqual(['drone', 'shield', 'sprinter', 'swarm', 'tank'])
+    expect(run.session.intensity()).toBeGreaterThan(0)
+  })
+
   test('a breach costs a life and three breaches end the run', () => {
     const run = driver()
     run.advance(4000)

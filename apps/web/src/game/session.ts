@@ -1,5 +1,6 @@
 import {
   type ComboTier,
+  type ErrorPolicy,
   type EventRecorder,
   type TransitionStat,
   ComboTracker,
@@ -15,6 +16,7 @@ import {
 } from '@keyfall/typing-core'
 
 import { type Band, pickWord } from './corpus'
+import { Director } from './director'
 import { type Rng, createRng } from './rng'
 
 /** The arena is a fixed logical space. The renderer scales it to the window. */
@@ -30,7 +32,7 @@ export const BASELINE_Y = ARENA_HEIGHT - 74
 export const REVEAL_Y = 18
 
 export type Phase = 'title' | 'playing' | 'over'
-export type EnemyKind = 'drone' | 'swarm' | 'tank'
+export type EnemyKind = 'drone' | 'swarm' | 'tank' | 'sprinter' | 'shield'
 
 export interface Enemy {
   id: string
@@ -61,14 +63,33 @@ export interface RunSummary {
   slowest: TransitionStat[]
 }
 
-const ARCHETYPES: Record<EnemyKind, { band: Band; speed: number; scoreMultiplier: number }> = {
-  drone: { band: 'medium', speed: 34, scoreMultiplier: 1 },
-  swarm: { band: 'short', speed: 52, scoreMultiplier: 1.2 },
-  tank: { band: 'long', speed: 20, scoreMultiplier: 1.5 },
+interface Archetype {
+  band: Band
+  speed: number
+  scoreMultiplier: number
+  /** What a wrong key does to progress on this enemy. */
+  errorPolicy: ErrorPolicy
+  /** Enemies spawned per appearance. */
+  burst: number
+}
+
+/**
+ * The archetypes, each asking for a different kind of typing.
+ *
+ * Sprinter is a short word travelling fast, so it prices reaction and burst.
+ * Shield is the only one that changes the rules of a mistake: a wrong key
+ * sends the whole word back to the start, which prices controlled accuracy
+ * under pressure. Both come from section 3 of the game design.
+ */
+const ARCHETYPES: Record<EnemyKind, Archetype> = {
+  drone: { band: 'medium', speed: 34, scoreMultiplier: 1, errorPolicy: 'keep', burst: 1 },
+  swarm: { band: 'short', speed: 52, scoreMultiplier: 1.2, errorPolicy: 'keep', burst: 3 },
+  tank: { band: 'long', speed: 20, scoreMultiplier: 1.5, errorPolicy: 'keep', burst: 1 },
+  sprinter: { band: 'short', speed: 96, scoreMultiplier: 1.6, errorPolicy: 'keep', burst: 1 },
+  shield: { band: 'medium', speed: 26, scoreMultiplier: 1.8, errorPolicy: 'reset', burst: 1 },
 }
 
 const STARTING_LIVES = 3
-const RAMP_MS = 240000
 
 /** Silence longer than this, with something to type, counts as idling. */
 const IDLE_GRACE_MS = 900
@@ -93,10 +114,6 @@ function halfTextWidth(word: string): number {
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t
 }
 
 /**
@@ -126,6 +143,7 @@ export class RunSession {
   private rng: Rng = createRng(1)
   private recorder: EventRecorder = createRecorder('idle')
   private comboTracker = new ComboTracker()
+  private director = new Director()
   private transitions = new TransitionTable()
   private nextEnemyId = 1
   private spawnTimerMs = 0
@@ -153,6 +171,7 @@ export class RunSession {
     this.recorder = createRecorder(`run-${seed}`)
     this.transitions = new TransitionTable()
     this.comboTracker = new ComboTracker()
+    this.director = new Director()
 
     this.phase = 'playing'
     this.enemies = []
@@ -200,16 +219,17 @@ export class RunSession {
     // backgrounded tab does not count as time spent playing.
     this.elapsedMs += dtMs
     const dtSeconds = dtMs / 1000
-    const ramp = clamp01(this.elapsedMs / RAMP_MS)
-    const speedScale = 1 + ramp * 1.2
+    const plan = this.director.plan()
 
-    for (const enemy of this.enemies) enemy.y += enemy.speed * speedScale * dtSeconds
+    for (const enemy of this.enemies) enemy.y += enemy.speed * plan.speedScale * dtSeconds
 
+    let livesLost = 0
     const breached = this.enemies.filter((e) => e.y >= BASELINE_Y)
     if (breached.length > 0) {
       this.enemies = this.enemies.filter((e) => e.y < BASELINE_Y)
       for (const enemy of breached) {
         this.lives -= 1
+        livesLost += 1
         // A breach is the plainest break in flow the game has, so it costs
         // combo even though nothing was mistyped.
         this.comboTracker.registerError()
@@ -221,6 +241,12 @@ export class RunSession {
         return
       }
     }
+
+    this.director.update(dtMs, {
+      enemies: this.enemies.length,
+      nearestProgress: this.nearestProgress(),
+      livesLost,
+    })
 
     // Dropped before spawning, so a dead prefix cannot silently attach itself
     // to a word that appears in the same tick.
@@ -235,9 +261,8 @@ export class RunSession {
 
     this.spawnTimerMs -= dtMs
     if (this.spawnTimerMs <= 0) {
-      this.spawn(ramp)
-      const interval = lerp(1700, 620, ramp)
-      this.spawnTimerMs = interval * this.rng.range(0.8, 1.2)
+      this.spawn()
+      this.spawnTimerMs = plan.intervalMs * this.rng.range(0.8, 1.2)
     }
 
     this.noteTierChange(nowMs)
@@ -428,13 +453,21 @@ export class RunSession {
     return this.enemies.some((e) => e.y < REVEAL_Y && e.word.startsWith(prefix))
   }
 
-  /** Coarse pressure estimate in [0, 1], used for telemetry and later for the director. */
+  /** Coarse pressure estimate in [0, 1], recorded on every keystroke. */
   pressure(): number {
-    if (this.enemies.length === 0) return 0
-    const density = clamp01(this.enemies.length / 7)
+    return this.director.currentPressure()
+  }
+
+  /** The director's dial, for tests and telemetry. Never shown to the player. */
+  intensity(): number {
+    return this.director.level()
+  }
+
+  /** How far the nearest enemy has fallen toward the baseline, in [0, 1]. */
+  private nearestProgress(): number {
     let nearest = 0
     for (const enemy of this.enemies) nearest = Math.max(nearest, enemy.y / BASELINE_Y)
-    return clamp01(0.5 * density + 0.5 * clamp01(nearest))
+    return clamp01(nearest)
   }
 
   liveWpm(): number {
@@ -464,7 +497,8 @@ export class RunSession {
   }
 
   private applyLockedKey(enemy: Enemy, char: string, nowMs: number, pressure: number): void {
-    const result = resolveLockedKey(enemy.word, enemy.typed, char)
+    const policy = ARCHETYPES[enemy.kind].errorPolicy
+    const result = resolveLockedKey(enemy.word, enemy.typed, char, policy)
     const previousKey = this.wordKeys[this.wordKeys.length - 1] ?? null
     const previousTime = this.wordTimesMs[this.wordTimesMs.length - 1]
 
@@ -487,6 +521,12 @@ export class RunSession {
         locked: true,
         pressure,
       })
+
+      const lost = enemy.typed - result.typed
+      enemy.typed = result.typed
+      // A shield that swallowed the whole word starts the measurement over
+      // with it, so the abandoned attempt is not charged to the retry.
+      if (lost > 0) this.beginWordWindow()
       return
     }
 
@@ -572,13 +612,14 @@ export class RunSession {
     this.wordStartTotal = this.keysTotal
   }
 
-  private spawn(ramp: number): void {
+  private spawn(): void {
     const kind = this.chooseKind()
-    const count = kind === 'swarm' ? 2 + this.rng.int(2) : 1
+    const archetype = ARCHETYPES[kind]
+    // A swarm arrives as a cluster of two or three, the rest one at a time.
+    const count = archetype.burst > 1 ? archetype.burst - this.rng.int(2) : 1
 
     for (let i = 0; i < count; i++) {
       const active = new Set(this.enemies.map((e) => e.word))
-      const archetype = ARCHETYPES[kind]
       const word = pickWord(archetype.band, this.rng, active)
 
       const y = -20 - i * 46
@@ -589,7 +630,7 @@ export class RunSession {
         kind,
         x: this.placeX(word, y),
         y,
-        speed: archetype.speed * this.rng.range(0.9, 1.1) * (1 + ramp * 0.1),
+        speed: archetype.speed * this.rng.range(0.9, 1.1),
         typed: 0,
         spawnedAtMs: this.nowMs,
       })
@@ -631,11 +672,26 @@ export class RunSession {
     return best
   }
 
+  /**
+   * Draws an archetype from the director's weights.
+   *
+   * The session no longer decides what the run is made of. It only rolls the
+   * dice the director hands it, which is what keeps composition and pacing in
+   * one place instead of spread across elapsed-time thresholds.
+   */
   private chooseKind(): EnemyKind {
-    if (this.elapsedMs < 25000) return 'drone'
-    const roll = this.rng.next()
-    if (this.elapsedMs > 60000 && roll < 0.18) return 'tank'
-    if (roll < 0.55) return 'swarm'
+    const weights = this.director.plan().weights
+    const entries = Object.entries(weights) as [EnemyKind, number][]
+
+    let total = 0
+    for (const [, weight] of entries) total += weight
+    if (total <= 0) return 'drone'
+
+    let roll = this.rng.next() * total
+    for (const [kind, weight] of entries) {
+      roll -= weight
+      if (roll <= 0) return kind
+    }
     return 'drone'
   }
 

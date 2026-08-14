@@ -54,7 +54,23 @@ describe('resolveLockedKey', () => {
   })
 
   test('a wrong character reports what was expected and keeps the lock', () => {
-    expect(resolveLockedKey('run', 1, 'x')).toEqual({ kind: 'wrong', expected: 'u' })
+    expect(resolveLockedKey('run', 1, 'x')).toEqual({ kind: 'wrong', expected: 'u', typed: 1 })
+  })
+
+  test('the reset policy sends the player back to the start of the sequence', () => {
+    expect(resolveLockedKey('shield', 4, 'x', 'reset')).toEqual({
+      kind: 'wrong',
+      expected: 'l',
+      typed: 0,
+    })
+  })
+
+  test('the policy only applies to mistakes, never to correct keys', () => {
+    expect(resolveLockedKey('shield', 4, 'l', 'reset')).toEqual({
+      kind: 'hit',
+      typed: 5,
+      complete: false,
+    })
   })
 })
 

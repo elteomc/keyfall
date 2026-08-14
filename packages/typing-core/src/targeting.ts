@@ -20,9 +20,21 @@ export type UnlockedResolution =
   /** No active sequence starts with this prefix. The prefix resets. */
   | { kind: 'miss'; prefix: '' }
 
+/**
+ * What a wrong key does to progress already made on the locked target.
+ *
+ * `keep` is the default the whole game ran on: the mistake costs accuracy and
+ * nothing else. `reset` is the shield rule from section 3.4 of the game
+ * design, where a single wrong key sends the player back to the start of the
+ * sequence. Making this a parameter keeps the rule with the archetype that
+ * owns it, instead of scattering enemy special cases through the session.
+ */
+export type ErrorPolicy = 'keep' | 'reset'
+
 export type LockedResolution =
   | { kind: 'hit'; typed: number; complete: boolean }
-  | { kind: 'wrong'; expected: string }
+  /** `typed` is the progress that survives the mistake. */
+  | { kind: 'wrong'; expected: string; typed: number }
 
 /** Apply one character while no target is locked. */
 export function resolveUnlockedKey(
@@ -47,10 +59,17 @@ export function resolveUnlockedKey(
 }
 
 /** Apply one character to the locked target. */
-export function resolveLockedKey(sequence: string, typed: number, key: string): LockedResolution {
+export function resolveLockedKey(
+  sequence: string,
+  typed: number,
+  key: string,
+  policy: ErrorPolicy = 'keep',
+): LockedResolution {
+  const survives = policy === 'reset' ? 0 : typed
+
   const expected = sequence[typed]
-  if (expected === undefined) return { kind: 'wrong', expected: '' }
-  if (key !== expected) return { kind: 'wrong', expected }
+  if (expected === undefined) return { kind: 'wrong', expected: '', typed: survives }
+  if (key !== expected) return { kind: 'wrong', expected, typed: survives }
 
   const nextTyped = typed + 1
   return { kind: 'hit', typed: nextTyped, complete: nextTyped >= sequence.length }

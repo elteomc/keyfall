@@ -1,7 +1,12 @@
 export type { TypingEvent, EventRecorder } from './events'
 export { createRecorder } from './events'
 
-export type { TargetCandidate, UnlockedResolution, LockedResolution } from './targeting'
+export type {
+  TargetCandidate,
+  UnlockedResolution,
+  LockedResolution,
+  ErrorPolicy,
+} from './targeting'
 export { resolveUnlockedKey, resolveLockedKey, distinguishingPrefix } from './targeting'
 
 export type { RhythmOptions } from './metrics'

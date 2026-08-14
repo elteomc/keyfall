@@ -21,6 +21,8 @@ const COLORS = {
   tank: '#ff9d7a',
   swarm: '#9df2b8',
   drone: '#c9d6ea',
+  sprinter: '#b9a7ff',
+  shield: '#7fe3d4',
   hud: '#7b8aa3',
   hudStrong: '#e6edf7',
   error: 'rgba(255, 90, 90, 0.18)',
@@ -61,6 +63,8 @@ function viewportFor(width: number, height: number): Viewport {
 function enemyColor(enemy: Enemy): string {
   if (enemy.kind === 'tank') return COLORS.tank
   if (enemy.kind === 'swarm') return COLORS.swarm
+  if (enemy.kind === 'sprinter') return COLORS.sprinter
+  if (enemy.kind === 'shield') return COLORS.shield
   return COLORS.drone
 }
 
@@ -196,14 +200,62 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
     ctx.fillStyle = enemyColor(enemy)
     ctx.fillText(rest, left + doneWidth, enemy.y)
 
-    // A thin bar under a tank makes its length readable at a glance.
-    if (enemy.kind === 'tank') {
-      ctx.fillStyle = 'rgba(255, 157, 122, 0.35)'
-      ctx.fillRect(left, enemy.y + 18, doneWidth + restWidth, 2)
-    }
+    drawArchetypeMark(ctx, enemy, left, doneWidth + restWidth)
   }
 
   ctx.globalAlpha = 1
+}
+
+/**
+ * A silhouette per archetype, so the player knows what a word will demand
+ * before reading a single character of it.
+ */
+function drawArchetypeMark(
+  ctx: CanvasRenderingContext2D,
+  enemy: Enemy,
+  left: number,
+  width: number,
+): void {
+  if (enemy.kind === 'tank') {
+    // A bar under the longest words, making their length readable at a glance.
+    ctx.fillStyle = 'rgba(255, 157, 122, 0.35)'
+    ctx.fillRect(left, enemy.y + 18, width, 2)
+    return
+  }
+
+  if (enemy.kind === 'shield') {
+    // An outline that closes as the word is typed. One wrong key opens it
+    // again, which is the rule this archetype exists to teach.
+    ctx.strokeStyle = 'rgba(127, 227, 212, 0.5)'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.roundRect(left - 9, enemy.y - 17, width + 18, 34, 7)
+    ctx.stroke()
+
+    const held = enemy.word.length === 0 ? 0 : enemy.typed / enemy.word.length
+    if (held > 0) {
+      ctx.strokeStyle = 'rgba(127, 227, 212, 0.95)'
+      ctx.beginPath()
+      ctx.moveTo(left - 9, enemy.y + 17)
+      ctx.lineTo(left - 9 + (width + 18) * held, enemy.y + 17)
+      ctx.stroke()
+    }
+    return
+  }
+
+  if (enemy.kind === 'sprinter') {
+    // A trail above it, pointing back the way it came.
+    ctx.strokeStyle = 'rgba(185, 167, 255, 0.4)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(enemy.x, enemy.y - 20)
+    ctx.lineTo(enemy.x, enemy.y - 34)
+    ctx.moveTo(enemy.x - 7, enemy.y - 24)
+    ctx.lineTo(enemy.x - 7, enemy.y - 32)
+    ctx.moveTo(enemy.x + 7, enemy.y - 24)
+    ctx.lineTo(enemy.x + 7, enemy.y - 32)
+    ctx.stroke()
+  }
 }
 
 function drawTierFlash(
