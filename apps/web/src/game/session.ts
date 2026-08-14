@@ -188,7 +188,7 @@ export class RunSession {
       this.enemies = this.enemies.filter((e) => e.y < BASELINE_Y)
       for (const enemy of breached) {
         this.lives -= 1
-        if (enemy.id === this.lockedId) this.cancelLock()
+        if (enemy.id === this.lockedId) this.cancelLock(nowMs)
       }
       this.lastErrorAtMs = nowMs
       if (this.lives <= 0) {
@@ -305,8 +305,16 @@ export class RunSession {
     if (enemy.typed >= enemy.word.length) this.completeWord(enemy, nowMs)
   }
 
-  /** Escape releases the lock without destroying progress on other targets. */
-  cancelLock(): void {
+  /**
+   * Escape releases the lock without destroying progress on other targets.
+   *
+   * The acquisition clock restarts here. Time spent on a word the player
+   * abandoned is not time spent finding the next one, and charging it to the
+   * next word's acquisition latency would make that measurement meaningless.
+   * The frame clock is deliberately left alone, since only `update` may
+   * advance it.
+   */
+  cancelLock(nowMs = this.nowMs): void {
     const enemy = this.lockedEnemy()
     if (enemy) enemy.typed = 0
     this.lockedId = null
@@ -314,6 +322,7 @@ export class RunSession {
     this.prefixTimesMs = []
     this.wordTimesMs = []
     this.wordKeys = []
+    this.readyAtMs = nowMs
   }
 
   lockedEnemy(): Enemy | null {

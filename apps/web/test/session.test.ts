@@ -198,6 +198,27 @@ describe('RunSession', () => {
     expect(run.session.currentSummary()!.accuracy).toBe(1)
   })
 
+  test('abandoning a word does not inflate the next acquisition latency', () => {
+    const run = driver()
+    run.advance(4000)
+
+    run.session.enemies = [fakeEnemy('a', 'travel', 200), fakeEnemy('b', 'vector', 300)]
+
+    run.type('tra')
+    expect(run.session.lockedId).toBe('a')
+
+    // Five seconds of staring at a word the player then gives up on.
+    run.advance(5000)
+    run.session.cancelLock(run.now())
+
+    run.type('vector', 80)
+    expect(run.session.kills).toBe(1)
+
+    run.advance(120000)
+    const acquisition = run.session.currentSummary()!.acquisitionMs!
+    expect(acquisition).toBeLessThan(500)
+  })
+
   test('a breach costs a life and three breaches end the run', () => {
     const run = driver()
     run.advance(4000)

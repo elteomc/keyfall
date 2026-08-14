@@ -60,7 +60,7 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (event.key === 'Escape') {
-    session.cancelLock()
+    session.cancelLock(nowMs)
     return
   }
 
