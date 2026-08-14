@@ -276,6 +276,51 @@ describe('RunSession', () => {
     expect(abandoned.session.combo()).toBeCloseTo(clean.session.combo(), 10)
   })
 
+  test('standing still with readable targets bleeds the combo', () => {
+    const run = driver(5)
+    run.advance(4000)
+    run.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    run.type('vector', 90)
+
+    const earned = run.session.combo()
+    expect(earned).toBeGreaterThan(0)
+
+    run.session.enemies = [fakeEnemy('b', 'travel', 200)]
+    run.advance(4000)
+
+    expect(run.session.combo()).toBeLessThan(earned)
+  })
+
+  test('an empty arena is the game pacing itself, not the player idling', () => {
+    const run = driver(5)
+    run.advance(4000)
+    run.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    run.type('vector', 90)
+
+    const earned = run.session.combo()
+
+    // Nothing readable on screen, and spawning suppressed by clearing each tick.
+    for (let tick = 0; tick < 30; tick++) {
+      run.advance(100)
+      run.session.enemies = []
+    }
+
+    expect(run.session.combo()).toBe(earned)
+  })
+
+  test('a climb in tier is stamped for the renderer', () => {
+    const run = driver(5)
+    run.advance(4000)
+    expect(run.session.promotedTier).toBeNull()
+
+    buildCombo(run, 6)
+    run.advance(16)
+
+    expect(run.session.promotedTier).not.toBeNull()
+    expect(run.session.tierPromotedAtMs).toBeGreaterThan(0)
+    expect(run.session.comboTier()).not.toBe('flat')
+  })
+
   test('a breach costs a life and three breaches end the run', () => {
     const run = driver()
     run.advance(4000)

@@ -184,6 +184,32 @@ describe('ComboTracker', () => {
     expect(combo.baselineCpm()).toBeLessThan(450)
   })
 
+  test('idle time bleeds the combo down and can cost a tier', () => {
+    const combo = new ComboTracker({ decayPerSecond: 2 })
+    for (let i = 0; i < 12; i++) combo.completeWord(word(7, 100))
+
+    const peak = combo.value()
+    expect(combo.tier()).toBe('hot')
+
+    combo.decay(1000)
+    expect(combo.value()).toBeCloseTo(peak - 2, 6)
+
+    combo.decay(10000)
+    expect(combo.value()).toBe(0)
+    expect(combo.tier()).toBe('flat')
+  })
+
+  test('decay never drives the combo below zero or moves an empty one', () => {
+    const combo = new ComboTracker()
+    combo.decay(5000)
+    expect(combo.value()).toBe(0)
+
+    combo.completeWord(word(7, 100))
+    const earned = combo.value()
+    combo.decay(0)
+    expect(combo.value()).toBe(earned)
+  })
+
   test('a word too short to time still counts and cannot divide by zero', () => {
     const combo = new ComboTracker({ initialBaselineCpm: 300 })
     const gain = combo.completeWord({

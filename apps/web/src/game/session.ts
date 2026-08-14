@@ -70,6 +70,10 @@ const ARCHETYPES: Record<EnemyKind, { band: Band; speed: number; scoreMultiplier
 const STARTING_LIVES = 3
 const RAMP_MS = 240000
 
+/** Silence longer than this, with something to type, counts as idling. */
+const IDLE_GRACE_MS = 900
+const TIER_ORDER: readonly ComboTier[] = ['flat', 'warm', 'hot', 'peak']
+
 /**
  * The renderer uses a fixed monospace face, so one constant advance per
  * character is accurate enough for spawn layout and keeps the session free of
@@ -113,7 +117,12 @@ export class RunSession {
   elapsedMs = 0
   lastErrorAtMs = -Infinity
   lastHitAtMs = -Infinity
+  /** Set when the combo climbs a tier, so the renderer can name it briefly. */
+  tierPromotedAtMs = -Infinity
+  promotedTier: ComboTier | null = null
 
+  private lastInputAtMs = 0
+  private lastTier: ComboTier = 'flat'
   private rng: Rng = createRng(1)
   private recorder: EventRecorder = createRecorder('idle')
   private comboTracker = new ComboTracker()
@@ -156,6 +165,10 @@ export class RunSession {
     this.elapsedMs = 0
     this.lastErrorAtMs = -Infinity
     this.lastHitAtMs = -Infinity
+    this.tierPromotedAtMs = -Infinity
+    this.promotedTier = null
+    this.lastInputAtMs = nowMs
+    this.lastTier = 'flat'
 
     this.nextEnemyId = 1
     this.spawnTimerMs = 900
@@ -213,18 +226,42 @@ export class RunSession {
     // to a word that appears in the same tick.
     this.dropStalePrefix()
 
+    // Combo bleeds only when there is something readable to type and the
+    // player is not typing it. The lull before anything has fallen into the
+    // arena is the game's pacing, not the player standing still.
+    if (this.targets().length > 0 && nowMs - this.lastInputAtMs > IDLE_GRACE_MS) {
+      this.comboTracker.decay(dtMs)
+    }
+
     this.spawnTimerMs -= dtMs
     if (this.spawnTimerMs <= 0) {
       this.spawn(ramp)
       const interval = lerp(1700, 620, ramp)
       this.spawnTimerMs = interval * this.rng.range(0.8, 1.2)
     }
+
+    this.noteTierChange(nowMs)
+  }
+
+  /** Records a climb so the renderer can name the new tier for a moment. */
+  private noteTierChange(nowMs: number): void {
+    const tier = this.comboTracker.tier()
+    if (tier === this.lastTier) return
+
+    if (TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(this.lastTier)) {
+      this.promotedTier = tier
+      this.tierPromotedAtMs = nowMs
+    }
+    this.lastTier = tier
   }
 
   /** Handle one printable character. */
   key(char: string, nowMs: number): void {
     if (this.phase !== 'playing') return
 
+    // Any keypress counts as engagement, including a reflex space. Only
+    // silence is idling.
+    this.lastInputAtMs = nowMs
     const pressure = this.pressure()
     const locked = this.lockedEnemy()
 

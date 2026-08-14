@@ -1,3 +1,5 @@
+import type { ComboTier } from '@keyfall/typing-core'
+
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
@@ -28,6 +30,18 @@ const FONT = '600 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 
 /** How far above the arena the fade-in begins, in arena units. */
 const FADE_START = 30
+
+/**
+ * Combo tier is shown as colour, not as a number. The tier name appears only
+ * at the moment it is won, then fades, so flow is felt rather than read.
+ */
+const TIER_RGB: Record<ComboTier, string> = {
+  flat: '143, 214, 255',
+  warm: '157, 242, 184',
+  hot: '242, 198, 109',
+  peak: '255, 157, 122',
+}
+const TIER_FLASH_MS = 1000
 
 interface Viewport {
   scale: number
@@ -75,6 +89,7 @@ export function render(
   drawBaseline(ctx, session)
   drawBeams(ctx, session, nowMs)
   drawEnemies(ctx, session)
+  drawTierFlash(ctx, session, nowMs)
   drawHud(ctx, session)
 
   if (nowMs - session.lastErrorAtMs < 140) {
@@ -119,7 +134,7 @@ function drawBaseline(ctx: CanvasRenderingContext2D, session: RunSession): void 
 
   const px = ARENA_WIDTH / 2
   const py = ARENA_HEIGHT - 34
-  ctx.fillStyle = COLORS.player
+  ctx.fillStyle = `rgb(${TIER_RGB[session.comboTier()]})`
   ctx.beginPath()
   ctx.moveTo(px, py - 18)
   ctx.lineTo(px + 15, py + 12)
@@ -137,10 +152,11 @@ function drawBaseline(ctx: CanvasRenderingContext2D, session: RunSession): void 
 function drawBeams(ctx: CanvasRenderingContext2D, session: RunSession, nowMs: number): void {
   const px = ARENA_WIDTH / 2
   const py = ARENA_HEIGHT - 48
+  const rgb = TIER_RGB[session.comboTier()]
   ctx.lineWidth = 2
   for (const beam of session.beams) {
     const life = Math.max(0, (beam.untilMs - nowMs) / 90)
-    ctx.strokeStyle = `rgba(143, 214, 255, ${0.55 * life})`
+    ctx.strokeStyle = `rgba(${rgb}, ${0.55 * life})`
     ctx.beginPath()
     ctx.moveTo(px, py)
     ctx.lineTo(beam.x, beam.y)
@@ -187,6 +203,28 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
     }
   }
 
+  ctx.globalAlpha = 1
+}
+
+function drawTierFlash(
+  ctx: CanvasRenderingContext2D,
+  session: RunSession,
+  nowMs: number,
+): void {
+  const tier = session.promotedTier
+  if (!tier) return
+
+  const age = nowMs - session.tierPromotedAtMs
+  if (age < 0 || age > TIER_FLASH_MS) return
+
+  const fade = 1 - age / TIER_FLASH_MS
+  ctx.globalAlpha = fade
+  ctx.fillStyle = `rgb(${TIER_RGB[tier]})`
+  ctx.font = '600 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  // Rises slightly as it fades, so it reads as a release rather than a label.
+  ctx.fillText(tier.toUpperCase(), ARENA_WIDTH / 2, ARENA_HEIGHT - 58 - (1 - fade) * 10)
   ctx.globalAlpha = 1
 }
 

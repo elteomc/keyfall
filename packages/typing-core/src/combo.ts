@@ -72,6 +72,8 @@ export interface ComboOptions {
   neutralRhythm?: number
   /** Fraction of the combo that survives one error. */
   errorRetention?: number
+  /** Combo drained per second while the caller reports the player as idle. */
+  decayPerSecond?: number
   /** Ceiling on the accumulated combo. */
   maxValue?: number
   /** Ascending tier boundaries. One fewer than the number of tiers. */
@@ -98,6 +100,7 @@ function resolve(options: ComboOptions): ComboConfig {
     maxSpeedRatio: options.maxSpeedRatio ?? 1.6,
     neutralRhythm: options.neutralRhythm ?? 0.75,
     errorRetention: options.errorRetention ?? 0.5,
+    decayPerSecond: options.decayPerSecond ?? 1,
     maxValue: options.maxValue ?? 40,
     tierThresholds: options.tierThresholds ?? [4, 10, 20],
     tierHysteresis: options.tierHysteresis ?? 0.8,
@@ -259,6 +262,22 @@ export class ComboTracker {
    */
   registerError(): void {
     this.current *= this.config.errorRetention
+    if (this.current < 0.01) this.current = 0
+    this.settleTier()
+  }
+
+  /**
+   * Bleed combo for a stretch of not typing.
+   *
+   * The caller decides what idle means, because only the game layer knows
+   * whether there was anything to type. Waiting out a lull with an empty arena
+   * is not idling, and charging for it would punish the player for the game's
+   * own pacing.
+   */
+  decay(dtMs: number): void {
+    if (this.current <= 0 || dtMs <= 0) return
+
+    this.current = Math.max(0, this.current - this.config.decayPerSecond * (dtMs / 1000))
     if (this.current < 0.01) this.current = 0
     this.settleTier()
   }
