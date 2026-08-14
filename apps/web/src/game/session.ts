@@ -197,6 +197,10 @@ export class RunSession {
       }
     }
 
+    // Dropped before spawning, so a dead prefix cannot silently attach itself
+    // to a word that appears in the same tick.
+    this.dropStalePrefix()
+
     this.spawnTimerMs -= dtMs
     if (this.spawnTimerMs <= 0) {
       this.spawn(ramp)
@@ -320,6 +324,21 @@ export class RunSession {
   /** Enemies the player can actually read, and therefore target. */
   targets(): Enemy[] {
     return this.enemies.filter((e) => e.y >= REVEAL_Y)
+  }
+
+  /**
+   * Forgets a prefix whose targets are all gone.
+   *
+   * Type `t` while `travel` and `traffic` are up, let both breach, and the
+   * next keystroke would otherwise be charged as a miss against words that no
+   * longer exist.
+   */
+  private dropStalePrefix(): void {
+    if (this.prefix === '' || this.lockedId !== null) return
+    if (this.targets().some((e) => e.word.startsWith(this.prefix))) return
+
+    this.prefix = ''
+    this.prefixTimesMs = []
   }
 
   private matchesOnlyUnrevealed(prefix: string): boolean {

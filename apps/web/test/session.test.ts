@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { ARENA_WIDTH, BASELINE_Y, REVEAL_Y, RunSession } from '../src/game/session'
+import { ARENA_WIDTH, BASELINE_Y, REVEAL_Y, type Enemy, RunSession } from '../src/game/session'
 
 /**
  * Synthetic typists driving the session on a fake clock.
@@ -35,6 +35,11 @@ function driver(seed = 42) {
       }
     },
   }
+}
+
+/** A revealed enemy parked at a known height, for tests that need exact words. */
+function fakeEnemy(id: string, word: string, y: number): Enemy {
+  return { id, word, kind: 'drone', x: 500, y, speed: 0, typed: 0, spawnedAtMs: 0 }
 }
 
 describe('RunSession', () => {
@@ -164,6 +169,33 @@ describe('RunSession', () => {
     }
 
     expect(seen.size).toBeGreaterThan(20)
+  })
+
+  test('a prefix whose targets are gone does not poison the next keystroke', () => {
+    const run = driver()
+    run.advance(4000)
+
+    run.session.enemies = [
+      fakeEnemy('a', 'travel', 200),
+      fakeEnemy('b', 'traffic', 240),
+      fakeEnemy('c', 'vector', 280),
+    ]
+
+    run.type('tr')
+    expect(run.session.prefix).toBe('tr')
+    expect(run.session.lockedId).toBeNull()
+
+    // Both `tr` words leave the arena.
+    run.session.enemies = [fakeEnemy('c', 'vector', 300)]
+    run.advance(120)
+    expect(run.session.prefix).toBe('')
+
+    // The next key is a clean start on the survivor, not a miss against ghosts.
+    run.type('v')
+    expect(run.session.lockedId).toBe('c')
+
+    run.advance(120000)
+    expect(run.session.currentSummary()!.accuracy).toBe(1)
   })
 
   test('a breach costs a life and three breaches end the run', () => {
