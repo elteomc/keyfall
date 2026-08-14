@@ -42,6 +42,14 @@ function fakeEnemy(id: string, word: string, y: number): Enemy {
   return { id, word, kind: 'drone', x: 500, y, speed: 0, typed: 0, spawnedAtMs: 0 }
 }
 
+/** Types a run of clean words, one target at a time, to build a combo. */
+function buildCombo(run: ReturnType<typeof driver>, rounds: number): void {
+  for (let round = 0; round < rounds; round++) {
+    run.session.enemies = [fakeEnemy(`c${round}`, 'vector', 200)]
+    run.type('vector', 90)
+  }
+}
+
 describe('RunSession', () => {
   test('a run starts on the title screen and enters play on start', () => {
     const fresh = new RunSession()
@@ -274,5 +282,52 @@ describe('RunSession', () => {
     expect(summary.acquisitionMs).not.toBeNull()
     // Transition timings need repeated samples, so a short run can report none.
     expect(Array.isArray(summary.slowest)).toBe(true)
+  })
+
+  test('clean typing builds a combo and lifts its tier', () => {
+    const run = driver()
+    run.advance(4000)
+    expect(run.session.combo()).toBe(0)
+    expect(run.session.comboTier()).toBe('flat')
+
+    buildCombo(run, 8)
+
+    expect(run.session.kills).toBe(8)
+    expect(run.session.combo()).toBeGreaterThan(0)
+    expect(run.session.comboTier()).not.toBe('flat')
+
+    // A new run is a clean slate, not a continuation of the last one.
+    run.session.start(run.now(), 3)
+    expect(run.session.combo()).toBe(0)
+    expect(run.session.comboTier()).toBe('flat')
+  })
+
+  test('an error cuts into the combo the player has built', () => {
+    const run = driver()
+    run.advance(4000)
+    buildCombo(run, 6)
+
+    const built = run.session.combo()
+    expect(built).toBeGreaterThan(0)
+
+    // 'q' is wrong wherever it lands in 'vector'.
+    run.session.enemies = [fakeEnemy('x', 'vector', 200)]
+    run.type('v', 90)
+    run.type('q', 90)
+
+    expect(run.session.combo()).toBeLessThan(built)
+  })
+
+  test('a breach costs the combo as well as a life', () => {
+    const run = driver()
+    run.advance(4000)
+    buildCombo(run, 6)
+
+    const built = run.session.combo()
+    run.session.enemies = [fakeEnemy('x', 'vector', BASELINE_Y)]
+    run.advance(32)
+
+    expect(run.session.lives).toBe(2)
+    expect(run.session.combo()).toBeLessThan(built)
   })
 })

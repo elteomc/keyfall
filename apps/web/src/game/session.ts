@@ -1,6 +1,8 @@
 import {
+  type ComboTier,
   type EventRecorder,
   type TransitionStat,
+  ComboTracker,
   TransitionTable,
   accuracy,
   createRecorder,
@@ -114,6 +116,7 @@ export class RunSession {
 
   private rng: Rng = createRng(1)
   private recorder: EventRecorder = createRecorder('idle')
+  private comboTracker = new ComboTracker()
   private transitions = new TransitionTable()
   private nextEnemyId = 1
   private spawnTimerMs = 0
@@ -126,6 +129,9 @@ export class RunSession {
 
   private keysCorrect = 0
   private keysTotal = 0
+  /** Run totals at the last completed word, so the combo can see per-word counts. */
+  private wordStartCorrect = 0
+  private wordStartTotal = 0
   private completedChars = 0
   private peakBurstWpm = 0
   private rhythmSamples: number[] = []
@@ -137,6 +143,7 @@ export class RunSession {
     this.rng = createRng(seed)
     this.recorder = createRecorder(`run-${seed}`)
     this.transitions = new TransitionTable()
+    this.comboTracker = new ComboTracker()
 
     this.phase = 'playing'
     this.enemies = []
@@ -161,6 +168,8 @@ export class RunSession {
 
     this.keysCorrect = 0
     this.keysTotal = 0
+    this.wordStartCorrect = 0
+    this.wordStartTotal = 0
     this.completedChars = 0
     this.peakBurstWpm = 0
     this.rhythmSamples = []
@@ -188,6 +197,9 @@ export class RunSession {
       this.enemies = this.enemies.filter((e) => e.y < BASELINE_Y)
       for (const enemy of breached) {
         this.lives -= 1
+        // A breach is the plainest break in flow the game has, so it costs
+        // combo even though nothing was mistyped.
+        this.comboTracker.registerError()
         if (enemy.id === this.lockedId) this.cancelLock(nowMs)
       }
       this.lastErrorAtMs = nowMs
@@ -260,6 +272,7 @@ export class RunSession {
       this.prefix = ''
       this.prefixTimesMs = []
       this.lastErrorAtMs = nowMs
+      this.comboTracker.registerError()
       this.recorder.record({
         timestampMs: nowMs,
         key: char,
@@ -389,6 +402,20 @@ export class RunSession {
     return wordsPerMinute(this.completedChars, this.elapsedMs)
   }
 
+  /**
+   * Accumulated combo, and the coarse tier a HUD may show.
+   *
+   * The formula behind the number is never shown to the player. What the player
+   * is meant to feel is that clean typing is powerful.
+   */
+  combo(): number {
+    return this.comboTracker.value()
+  }
+
+  comboTier(): ComboTier {
+    return this.comboTracker.tier()
+  }
+
   currentSummary(): RunSummary | null {
     return this.summary
   }
@@ -404,6 +431,7 @@ export class RunSession {
 
     if (result.kind === 'wrong') {
       this.lastErrorAtMs = nowMs
+      this.comboTracker.registerError()
       if (previousKey !== null && result.expected !== '') {
         this.transitions.observe(previousKey, result.expected, 0, false)
       }
@@ -475,6 +503,17 @@ export class RunSession {
       const burst = wordsPerMinute(enemy.word.length - 1, lastKeyMs - firstKeyMs)
       this.peakBurstWpm = Math.max(this.peakBurstWpm, burst)
     }
+
+    this.comboTracker.completeWord({
+      chars: enemy.word.length,
+      durationMs:
+        firstKeyMs === undefined || lastKeyMs === undefined ? 0 : lastKeyMs - firstKeyMs,
+      correctKeys: this.keysCorrect - this.wordStartCorrect,
+      totalKeys: this.keysTotal - this.wordStartTotal,
+      rhythm,
+    })
+    this.wordStartCorrect = this.keysCorrect
+    this.wordStartTotal = this.keysTotal
 
     this.readyAtMs = nowMs
     this.wordTimesMs = []

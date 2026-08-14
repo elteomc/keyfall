@@ -15,5 +15,8 @@ export {
   accuracy,
 } from './metrics'
 
+export type { ComboComponents, ComboOptions, ComboTier, WordOutcome } from './combo'
+export { ComboTracker, comboGain } from './combo'
+
 export type { TransitionStat, TransitionTableOptions } from './transitions'
 export { TransitionTable } from './transitions'
