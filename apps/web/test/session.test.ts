@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { BASELINE_Y, RunSession } from '../src/game/session'
+import { BASELINE_Y, REVEAL_Y, RunSession } from '../src/game/session'
 
 /**
  * Synthetic typists driving the session on a fake clock.
@@ -67,6 +67,35 @@ describe('RunSession', () => {
     expect(run.session.kills).toBe(1)
     expect(run.session.score).toBeGreaterThan(0)
     expect(run.session.lockedId).toBeNull()
+  })
+
+  test('an enemy above the reveal line cannot be targeted', () => {
+    const run = driver()
+    run.advance(4000)
+
+    const enemy = run.session.enemies[0]!
+    enemy.y = REVEAL_Y - 1
+
+    expect(run.session.targets().some((e) => e.id === enemy.id)).toBe(false)
+
+    run.type(enemy.word[0]!)
+    expect(run.session.lockedId).toBeNull()
+    expect(enemy.typed).toBe(0)
+  })
+
+  test('a key aimed at an unrevealed word is ignored, not counted as an error', () => {
+    const run = driver()
+    run.advance(4000)
+
+    // Only one enemy, held above the reveal line.
+    const enemy = run.session.enemies[0]!
+    run.session.enemies = [enemy]
+    enemy.y = REVEAL_Y - 1
+
+    run.type(enemy.word[0]!)
+    run.advance(120000)
+
+    expect(run.session.currentSummary()!.accuracy).toBe(1)
   })
 
   test('a wrong key keeps the lock and only costs accuracy', () => {

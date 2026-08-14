@@ -20,6 +20,13 @@ export const ARENA_WIDTH = 1000
 export const ARENA_HEIGHT = 700
 export const BASELINE_Y = ARENA_HEIGHT - 74
 
+/**
+ * Enemies spawn above the arena and are not targetable until they have fallen
+ * past this line. Locking a word the player cannot read yet feels like a
+ * misfire, so prefix resolution ignores anything above it.
+ */
+export const REVEAL_Y = 18
+
 export type Phase = 'title' | 'playing' | 'over'
 export type EnemyKind = 'drone' | 'swarm' | 'tank'
 
@@ -185,17 +192,24 @@ export class RunSession {
   key(char: string, nowMs: number): void {
     if (this.phase !== 'playing') return
 
-    this.keysTotal += 1
     const pressure = this.pressure()
     const locked = this.lockedEnemy()
 
     if (locked) {
+      this.keysTotal += 1
       this.applyLockedKey(locked, char, nowMs, pressure)
       return
     }
 
+    // Aiming at a word that has not dropped into the arena yet is a timing
+    // guess, not a mistake, so the keystroke is ignored instead of charged as
+    // an error. Without this, hiding unrevealed enemies would just trade one
+    // phantom error for another.
+    if (this.matchesOnlyUnrevealed(this.prefix + char)) return
+
+    this.keysTotal += 1
     const result = resolveUnlockedKey(
-      this.enemies.map((e) => ({ id: e.id, sequence: e.word })),
+      this.targets().map((e) => ({ id: e.id, sequence: e.word })),
       this.prefix,
       char,
     )
@@ -284,6 +298,16 @@ export class RunSession {
   lockedEnemy(): Enemy | null {
     if (this.lockedId === null) return null
     return this.enemies.find((e) => e.id === this.lockedId) ?? null
+  }
+
+  /** Enemies the player can actually read, and therefore target. */
+  targets(): Enemy[] {
+    return this.enemies.filter((e) => e.y >= REVEAL_Y)
+  }
+
+  private matchesOnlyUnrevealed(prefix: string): boolean {
+    if (this.enemies.some((e) => e.y >= REVEAL_Y && e.word.startsWith(prefix))) return false
+    return this.enemies.some((e) => e.y < REVEAL_Y && e.word.startsWith(prefix))
   }
 
   /** Coarse pressure estimate in [0, 1], used for telemetry and later for the director. */

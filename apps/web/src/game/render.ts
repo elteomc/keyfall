@@ -1,4 +1,11 @@
-import { ARENA_HEIGHT, ARENA_WIDTH, BASELINE_Y, type Enemy, type RunSession } from './session'
+import {
+  ARENA_HEIGHT,
+  ARENA_WIDTH,
+  BASELINE_Y,
+  REVEAL_Y,
+  type Enemy,
+  type RunSession,
+} from './session'
 
 const COLORS = {
   background: '#080b12',
@@ -18,6 +25,9 @@ const COLORS = {
 }
 
 const FONT = '600 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+
+/** How far above the arena the fade-in begins, in arena units. */
+const FADE_START = 30
 
 interface Viewport {
   scale: number
@@ -54,6 +64,13 @@ export function render(
   const view = viewportFor(width, height)
   ctx.setTransform(view.scale, 0, 0, view.scale, view.offsetX, view.offsetY)
 
+  // Everything is clipped to the arena rect. Enemies start above the top edge,
+  // and without this they would draw into the letterboxed margin.
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, ARENA_WIDTH, ARENA_HEIGHT)
+  ctx.clip()
+
   drawGrid(ctx)
   drawBaseline(ctx, session)
   drawBeams(ctx, session, nowMs)
@@ -64,6 +81,15 @@ export function render(
     ctx.fillStyle = COLORS.error
     ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT)
   }
+
+  ctx.restore()
+}
+
+/** Opacity ramp that ends exactly where an enemy becomes targetable. */
+function revealAlpha(enemy: Enemy): number {
+  const span = REVEAL_Y + FADE_START
+  const progress = Math.min(1, Math.max(0, (enemy.y + FADE_START) / span))
+  return 0.15 + 0.85 * progress
 }
 
 function drawGrid(ctx: CanvasRenderingContext2D): void {
@@ -128,6 +154,7 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
   ctx.textBaseline = 'middle'
 
   for (const enemy of session.enemies) {
+    ctx.globalAlpha = revealAlpha(enemy)
     const isLocked = enemy.id === session.lockedId
     const isCandidate = session.prefix.length > 0 && enemy.word.startsWith(session.prefix)
     const highlight = isLocked ? enemy.typed : isCandidate ? session.prefix.length : 0
@@ -159,6 +186,8 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
       ctx.fillRect(left, enemy.y + 18, doneWidth + restWidth, 2)
     }
   }
+
+  ctx.globalAlpha = 1
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, session: RunSession): void {
