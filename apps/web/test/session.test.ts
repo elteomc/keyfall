@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { BASELINE_Y, REVEAL_Y, RunSession } from '../src/game/session'
+import { ARENA_WIDTH, BASELINE_Y, REVEAL_Y, RunSession } from '../src/game/session'
 
 /**
  * Synthetic typists driving the session on a fake clock.
@@ -129,6 +129,41 @@ describe('RunSession', () => {
     run.session.cancelLock()
     expect(run.session.lockedId).toBeNull()
     expect(run.session.enemies.every((e) => e.typed === 0)).toBe(true)
+  })
+
+  test('spawned words stay inside the arena and clear their neighbours', () => {
+    const run = driver(11)
+    const seen = new Set<string>()
+    // A monospace advance of 13.2 at 22px, matching the renderer.
+    const halfWidth = (word: string) => (word.length * 13.2) / 2
+
+    for (let tick = 0; tick < 400; tick++) {
+      run.advance(120)
+      // Stand in for a player who clears the arena, so the run keeps spawning
+      // instead of ending after three breaches.
+      run.session.enemies = run.session.enemies.filter((e) => e.y < 500)
+
+      for (const enemy of run.session.enemies) {
+        if (seen.has(enemy.id)) continue
+        seen.add(enemy.id)
+
+        const half = halfWidth(enemy.word)
+        expect(enemy.x - half).toBeGreaterThanOrEqual(0)
+        expect(enemy.x + half).toBeLessThanOrEqual(ARENA_WIDTH)
+
+        // With at most two neighbours in the band there is always room, so a
+        // clean slot is expected rather than merely likely.
+        const band = run.session.enemies.filter(
+          (e) => e.id !== enemy.id && Math.abs(e.y - enemy.y) < 140,
+        )
+        if (band.length > 2) continue
+        for (const other of band) {
+          expect(Math.abs(other.x - enemy.x)).toBeGreaterThanOrEqual(half + halfWidth(other.word))
+        }
+      }
+    }
+
+    expect(seen.size).toBeGreaterThan(20)
   })
 
   test('a breach costs a life and three breaches end the run', () => {

@@ -68,6 +68,23 @@ const ARCHETYPES: Record<EnemyKind, { band: Band; speed: number; scoreMultiplier
 const STARTING_LIVES = 3
 const RAMP_MS = 240000
 
+/**
+ * The renderer uses a fixed monospace face, so one constant advance per
+ * character is accurate enough for spawn layout and keeps the session free of
+ * canvas measurement.
+ */
+const CHAR_WIDTH = 13.2
+const SPAWN_MARGIN = 40
+/** Two words this close vertically read as one cluttered line. */
+const STACK_BAND_Y = 140
+/** Blank space demanded between two words on the same line. */
+const WORD_GAP = 18
+const PLACEMENT_TRIES = 6
+
+function halfTextWidth(word: string): number {
+  return (word.length * CHAR_WIDTH) / 2
+}
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
@@ -424,17 +441,54 @@ export class RunSession {
       const archetype = ARCHETYPES[kind]
       const word = pickWord(archetype.band, this.rng, active)
 
+      const y = -20 - i * 46
+
       this.enemies.push({
         id: `e${this.nextEnemyId++}`,
         word,
         kind,
-        x: this.rng.range(120, ARENA_WIDTH - 120),
-        y: -20 - i * 46,
+        x: this.placeX(word, y),
+        y,
         speed: archetype.speed * this.rng.range(0.9, 1.1) * (1 + ramp * 0.1),
         typed: 0,
         spawnedAtMs: this.nowMs,
       })
     }
+  }
+
+  /**
+   * Picks a horizontal slot for a new word.
+   *
+   * A single unconstrained draw lets a long word land on top of a neighbour,
+   * and an unreadable word is an unfair target rather than a hard one. This
+   * takes the first candidate that clears every word in the same vertical
+   * band, and otherwise the roomiest one it saw.
+   */
+  private placeX(word: string, y: number): number {
+    const half = halfTextWidth(word)
+    const min = SPAWN_MARGIN + half
+    const max = ARENA_WIDTH - SPAWN_MARGIN - half
+    if (max <= min) return ARENA_WIDTH / 2
+
+    const neighbours = this.enemies.filter((e) => Math.abs(e.y - y) < STACK_BAND_Y)
+    let best = this.rng.range(min, max)
+    let bestGap = -Infinity
+
+    for (let attempt = 0; attempt < PLACEMENT_TRIES; attempt++) {
+      const x = attempt === 0 ? best : this.rng.range(min, max)
+      let gap = Infinity
+      for (const other of neighbours) {
+        const needed = half + halfTextWidth(other.word) + WORD_GAP
+        gap = Math.min(gap, Math.abs(other.x - x) - needed)
+      }
+      if (gap > bestGap) {
+        bestGap = gap
+        best = x
+      }
+      if (gap >= 0) break
+    }
+
+    return best
   }
 
   private chooseKind(): EnemyKind {
