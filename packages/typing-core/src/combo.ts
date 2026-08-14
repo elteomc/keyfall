@@ -54,6 +54,12 @@ export interface ComboOptions {
   windowWords?: number
   /** Baseline assumed before the player has one, in characters per minute. */
   initialBaselineCpm?: number
+  /**
+   * True when `initialBaselineCpm` came from a stored profile rather than from
+   * the default prior. A real baseline is not warm-started away by the first
+   * word. This is the seam milestone 2 persistence plugs into.
+   */
+  seededBaseline?: boolean
   /** Weight of the newest word in the baseline estimate. */
   baselineEta?: number
   /** Floor on the baseline, so a stalled estimate cannot inflate the ratio. */
@@ -85,6 +91,7 @@ function resolve(options: ComboOptions): ComboConfig {
     rhythmExponent: options.rhythmExponent ?? 0.6,
     windowWords: Math.max(1, options.windowWords ?? 8),
     initialBaselineCpm: options.initialBaselineCpm ?? 200,
+    seededBaseline: options.seededBaseline ?? false,
     baselineEta: options.baselineEta ?? 0.05,
     minBaselineCpm: options.minBaselineCpm ?? 60,
     minSpeedRatio: options.minSpeedRatio ?? 0.5,
@@ -137,6 +144,7 @@ export class ComboTracker {
   private readonly config: ComboConfig
   private readonly window: WordOutcome[] = []
   private baseline: number
+  private timedWords: number
   private current = 0
   private tierIndex = 0
   private gain = 0
@@ -144,6 +152,9 @@ export class ComboTracker {
   constructor(options: ComboOptions = {}) {
     this.config = resolve(options)
     this.baseline = Math.max(this.config.minBaselineCpm, this.config.initialBaselineCpm)
+    // A seeded baseline already carries the weight of a full history, so it
+    // enters at the settled learning rate instead of the warm-start one.
+    this.timedWords = this.config.seededBaseline ? Math.round(1 / this.config.baselineEta) : 0
   }
 
   /** Accumulated combo. */
@@ -194,9 +205,14 @@ export class ComboTracker {
       }
     }
 
+    // Until the player has been measured, speed is neutral. Judging the first
+    // words of a run against a prior nobody chose is what biased combo for
+    // anyone whose real pace was far from it.
+    const measured = this.timedWords > 0 && spanMs > 0
+
     return {
       accuracy: total > 0 ? correct / total : 1,
-      speedRatio: spanMs > 0 ? spanChars / (spanMs / 60000) / this.baseline : 1,
+      speedRatio: measured ? spanChars / (spanMs / 60000) / this.baseline : 1,
       rhythm: rhythmCount > 0 ? rhythmTotal / rhythmCount : this.config.neutralRhythm,
     }
   }
@@ -218,7 +234,13 @@ export class ComboTracker {
 
     const cpm = wordCpm(outcome)
     if (cpm !== null) {
-      const next = this.baseline + this.config.baselineEta * (cpm - this.baseline)
+      // The learning rate starts at one and decays to the configured value, so
+      // the first measured word replaces the prior outright and the estimate is
+      // the running mean until it has enough history to settle. Without this a
+      // short run never escapes the prior at all.
+      this.timedWords += 1
+      const eta = Math.max(this.config.baselineEta, 1 / this.timedWords)
+      const next = this.baseline + eta * (cpm - this.baseline)
       this.baseline = Math.max(this.config.minBaselineCpm, next)
     }
 

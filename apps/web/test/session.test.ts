@@ -244,6 +244,38 @@ describe('RunSession', () => {
     expect(run.session.currentSummary()!.accuracy).toBe(1)
   })
 
+  test('a miss before a word does not dilute that word', () => {
+    const clean = driver(5)
+    clean.advance(4000)
+    clean.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    clean.type('vector', 90)
+
+    const fumbled = driver(5)
+    fumbled.advance(4000)
+    fumbled.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    // `q` starts nothing on screen, so it is a miss that ends the window.
+    fumbled.type('q', 90)
+    fumbled.type('vector', 90)
+
+    expect(fumbled.session.combo()).toBeCloseTo(clean.session.combo(), 10)
+  })
+
+  test('keys spent on an abandoned word are not charged to the next one', () => {
+    const clean = driver(5)
+    clean.advance(4000)
+    clean.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    clean.type('vector', 90)
+
+    const abandoned = driver(5)
+    abandoned.advance(4000)
+    abandoned.session.enemies = [fakeEnemy('b', 'travel', 200), fakeEnemy('a', 'vector', 240)]
+    abandoned.type('trav', 90)
+    abandoned.session.cancelLock(abandoned.now())
+    abandoned.type('vector', 90)
+
+    expect(abandoned.session.combo()).toBeCloseTo(clean.session.combo(), 10)
+  })
+
   test('a breach costs a life and three breaches end the run', () => {
     const run = driver()
     run.advance(4000)

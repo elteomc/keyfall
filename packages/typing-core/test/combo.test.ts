@@ -68,8 +68,10 @@ describe('ComboTracker', () => {
     expect(combo.value()).toBeGreaterThan(0)
     expect(combo.tier()).toBe('flat')
 
+    // A clean word typed at the player's own pace is worth exactly one, since
+    // speed is measured against that pace rather than against a fixed prior.
     for (let i = 0; i < 19; i++) combo.completeWord(word(7, 100))
-    expect(combo.value()).toBeGreaterThan(20)
+    expect(combo.value()).toBeGreaterThanOrEqual(20)
     expect(combo.tier()).toBe('peak')
   })
 
@@ -145,6 +147,41 @@ describe('ComboTracker', () => {
     combo.registerError()
     combo.registerError()
     expect(combo.tier()).toBe('flat')
+  })
+
+  test('the first word is not judged against a prior nobody chose', () => {
+    // Two typists a factor of four apart, both typing evenly. Neither has a
+    // measured baseline yet, so neither may be rewarded or punished for pace.
+    const slow = new ComboTracker()
+    const fast = new ComboTracker()
+
+    expect(slow.completeWord(word(7, 240))).toBeCloseTo(fast.completeWord(word(7, 60)), 10)
+  })
+
+  test('the first measured word replaces the prior outright', () => {
+    const combo = new ComboTracker({ initialBaselineCpm: 200 })
+    // Seven characters in 600 ms is six intervals, so 600 cpm.
+    combo.completeWord(word(7, 100))
+
+    expect(combo.baselineCpm()).toBeCloseTo(600, 6)
+  })
+
+  test('a short run escapes the prior instead of sitting on it', () => {
+    const combo = new ComboTracker({ initialBaselineCpm: 200 })
+    for (let i = 0; i < 5; i++) combo.completeWord(word(7, 100))
+
+    // Five words in, the estimate is the player's own pace rather than a
+    // number the settled learning rate would still be crawling toward.
+    expect(combo.baselineCpm()).toBeCloseTo(600, 6)
+  })
+
+  test('a seeded baseline is not thrown away by the first word', () => {
+    const combo = new ComboTracker({ initialBaselineCpm: 400, seededBaseline: true })
+    combo.completeWord(word(7, 100))
+
+    // Moved toward the observed 600, but only by the settled learning rate.
+    expect(combo.baselineCpm()).toBeGreaterThan(400)
+    expect(combo.baselineCpm()).toBeLessThan(450)
   })
 
   test('a word too short to time still counts and cannot divide by zero', () => {

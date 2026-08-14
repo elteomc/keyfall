@@ -273,6 +273,9 @@ export class RunSession {
       this.prefixTimesMs = []
       this.lastErrorAtMs = nowMs
       this.comboTracker.registerError()
+      // The miss ends the current measurement window along with the prefix, so
+      // it is charged here and not again in the next word's accuracy.
+      this.beginWordWindow()
       this.recorder.record({
         timestampMs: nowMs,
         key: char,
@@ -354,9 +357,8 @@ export class RunSession {
     this.lockedId = null
     this.prefix = ''
     this.prefixTimesMs = []
-    this.wordTimesMs = []
-    this.wordKeys = []
     this.readyAtMs = nowMs
+    this.beginWordWindow()
   }
 
   lockedEnemy(): Enemy | null {
@@ -512,12 +514,25 @@ export class RunSession {
       totalKeys: this.keysTotal - this.wordStartTotal,
       rhythm,
     })
-    this.wordStartCorrect = this.keysCorrect
-    this.wordStartTotal = this.keysTotal
 
     this.readyAtMs = nowMs
+    this.beginWordWindow()
+  }
+
+  /**
+   * Starts a fresh per-word measurement window.
+   *
+   * Key counts and timing have to start together. When they did not, keys
+   * spent on a word the player abandoned landed in the next word's accuracy
+   * while contributing none of its time, so a recovered word was judged fast
+   * and sloppy at once. Those keys are still charged, immediately and once,
+   * through `registerError`.
+   */
+  private beginWordWindow(): void {
     this.wordTimesMs = []
     this.wordKeys = []
+    this.wordStartCorrect = this.keysCorrect
+    this.wordStartTotal = this.keysTotal
   }
 
   private spawn(ramp: number): void {
