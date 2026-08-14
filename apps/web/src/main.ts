@@ -49,7 +49,9 @@ window.addEventListener('keydown', (event) => {
   const nowMs = performance.now()
 
   if (session.phase !== 'playing') {
-    if (event.key === 'Enter' || event.key === ' ') {
+    // Enter is the only restart key. Space would restart on a keystroke the
+    // player had already sent, skipping the summary of the run they just lost.
+    if (event.key === 'Enter') {
       event.preventDefault()
       lastFrameMs = nowMs
       session.start(nowMs)

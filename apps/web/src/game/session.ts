@@ -216,6 +216,27 @@ export class RunSession {
     const pressure = this.pressure()
     const locked = this.lockedEnemy()
 
+    // No word in the corpus contains a space, so a space between words is a
+    // typing habit rather than a mistake. It costs nothing, but it is kept in
+    // the event stream because reflex spacing is a real motor pattern the
+    // skill model will want later. Events with key ' ' are exactly these.
+    if (char === ' ') {
+      this.recorder.record({
+        timestampMs: nowMs,
+        key: char,
+        code: 'Space',
+        sequenceId: locked?.word ?? null,
+        expectedChar: null,
+        correct: false,
+        charIndex: null,
+        previousCorrectKey: this.wordKeys[this.wordKeys.length - 1] ?? null,
+        targetId: locked?.id ?? null,
+        locked: locked !== null,
+        pressure,
+      })
+      return
+    }
+
     if (locked) {
       this.keysTotal += 1
       this.applyLockedKey(locked, char, nowMs, pressure)

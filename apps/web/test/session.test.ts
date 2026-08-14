@@ -219,6 +219,23 @@ describe('RunSession', () => {
     expect(acquisition).toBeLessThan(500)
   })
 
+  test('a reflex space is recorded but never counted as a mistake', () => {
+    const run = driver()
+    run.advance(4000)
+
+    run.session.enemies = [fakeEnemy('a', 'travel', 200)]
+    run.type('travel')
+
+    const eventsBefore = run.session.eventCount()
+    run.type('   ')
+
+    expect(run.session.eventCount()).toBe(eventsBefore + 3)
+    expect(run.session.lastErrorAtMs).toBe(-Infinity)
+
+    run.advance(120000)
+    expect(run.session.currentSummary()!.accuracy).toBe(1)
+  })
+
   test('a breach costs a life and three breaches end the run', () => {
     const run = driver()
     run.advance(4000)
