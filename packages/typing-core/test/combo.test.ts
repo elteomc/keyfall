@@ -75,6 +75,20 @@ describe('ComboTracker', () => {
     expect(combo.tier()).toBe('peak')
   })
 
+  test('progress reports the share of the ceiling held', () => {
+    const combo = new ComboTracker({ maxValue: 5 })
+    expect(combo.progress()).toBe(0)
+
+    for (let i = 0; i < 3; i++) combo.completeWord(word(7, 100))
+    const partial = combo.progress()
+    expect(partial).toBeGreaterThan(0)
+    expect(partial).toBeLessThan(1)
+    expect(partial).toBeCloseTo(combo.value() / 5, 10)
+
+    for (let i = 0; i < 10; i++) combo.completeWord(word(7, 100))
+    expect(combo.progress()).toBe(1)
+  })
+
   test('the combo is capped', () => {
     const combo = new ComboTracker({ maxValue: 5 })
     for (let i = 0; i < 10; i++) combo.completeWord(word(7, 100))

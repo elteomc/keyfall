@@ -18,6 +18,7 @@ import {
 import { type Band, pickWord } from './corpus'
 import { Director } from './director'
 import { type Rng, createRng } from './rng'
+import { wordScore } from './scoring'
 
 /** The arena is a fixed logical space. The renderer scales it to the window. */
 export const ARENA_WIDTH = 1000
@@ -66,7 +67,6 @@ export interface RunSummary {
 interface Archetype {
   band: Band
   speed: number
-  scoreMultiplier: number
   /** What a wrong key does to progress on this enemy. */
   errorPolicy: ErrorPolicy
   /** Enemies spawned per appearance. */
@@ -80,13 +80,16 @@ interface Archetype {
  * Shield is the only one that changes the rules of a mistake: a wrong key
  * sends the whole word back to the start, which prices controlled accuracy
  * under pressure. Both come from section 3 of the game design.
+ *
+ * What each one is worth lives in `scoring.ts`, beside the bounds that keep
+ * the spread between them small.
  */
 const ARCHETYPES: Record<EnemyKind, Archetype> = {
-  drone: { band: 'medium', speed: 34, scoreMultiplier: 1, errorPolicy: 'keep', burst: 1 },
-  swarm: { band: 'short', speed: 52, scoreMultiplier: 1.2, errorPolicy: 'keep', burst: 3 },
-  tank: { band: 'long', speed: 20, scoreMultiplier: 1.5, errorPolicy: 'keep', burst: 1 },
-  sprinter: { band: 'short', speed: 96, scoreMultiplier: 1.6, errorPolicy: 'keep', burst: 1 },
-  shield: { band: 'medium', speed: 26, scoreMultiplier: 1.8, errorPolicy: 'reset', burst: 1 },
+  drone: { band: 'medium', speed: 34, errorPolicy: 'keep', burst: 1 },
+  swarm: { band: 'short', speed: 52, errorPolicy: 'keep', burst: 3 },
+  tank: { band: 'long', speed: 20, errorPolicy: 'keep', burst: 1 },
+  sprinter: { band: 'short', speed: 96, errorPolicy: 'keep', burst: 1 },
+  shield: { band: 'medium', speed: 26, errorPolicy: 'reset', burst: 1 },
 }
 
 const STARTING_LIVES = 3
@@ -563,7 +566,6 @@ export class RunSession {
     this.lockedId = null
     this.kills += 1
     this.completedChars += enemy.word.length
-    this.score += Math.round(enemy.word.length * 10 * ARCHETYPES[enemy.kind].scoreMultiplier)
 
     const firstKeyMs = this.wordTimesMs[0]
     const lastKeyMs = this.wordTimesMs[this.wordTimesMs.length - 1]
@@ -590,6 +592,18 @@ export class RunSession {
       correctKeys: this.keysCorrect - this.wordStartCorrect,
       totalKeys: this.keysTotal - this.wordStartTotal,
       rhythm,
+    })
+
+    // Scored after the combo has seen the word, so the word the player just
+    // typed is priced with itself included rather than a word behind.
+    const quality = this.comboTracker.components()
+    this.score += wordScore({
+      chars: enemy.word.length,
+      kind: enemy.kind,
+      intensity: this.director.level(),
+      comboFraction: this.comboTracker.progress(),
+      accuracy: quality.accuracy,
+      rhythm: quality.rhythm,
     })
 
     this.readyAtMs = nowMs

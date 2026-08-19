@@ -466,6 +466,24 @@ describe('RunSession', () => {
     expect(run.session.combo()).toBeLessThan(built)
   })
 
+  test('the same words are worth more to a player typing them cleanly', () => {
+    const clean = driver(5)
+    clean.advance(4000)
+    buildCombo(clean, 6)
+
+    const shaky = driver(5)
+    shaky.advance(4000)
+    for (let round = 0; round < 6; round++) {
+      shaky.session.enemies = [fakeEnemy(`c${round}`, 'vector', 200)]
+      // One wrong key per word, then the word itself. Same six kills.
+      shaky.type('q', 90)
+      shaky.type('vector', 90)
+    }
+
+    expect(shaky.session.kills).toBe(clean.session.kills)
+    expect(shaky.session.score).toBeLessThan(clean.session.score)
+  })
+
   test('a breach costs the combo as well as a life', () => {
     const run = driver()
     run.advance(4000)

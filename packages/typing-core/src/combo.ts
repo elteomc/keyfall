@@ -170,6 +170,18 @@ export class ComboTracker {
     return TIERS[this.tierIndex] ?? 'flat'
   }
 
+  /**
+   * The share of the ceiling the combo currently holds, in [0, 1].
+   *
+   * The raw value is meaningless outside this class, since the ceiling is
+   * configurable. A caller that wants to scale a reward by the combo wants
+   * this, and it keeps `maxValue` from leaking into the game layer.
+   */
+  progress(): number {
+    if (this.config.maxValue <= 0) return 0
+    return Math.min(1, this.current / this.config.maxValue)
+  }
+
   /** Gain of the most recent completed word. */
   lastGain(): number {
     return this.gain
