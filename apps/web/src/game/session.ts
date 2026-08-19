@@ -32,8 +32,36 @@ export const BASELINE_Y = ARENA_HEIGHT - 74
  */
 export const REVEAL_Y = 18
 
+/** Where the player sits. Beams leave from here and misses land here. */
+export const PLAYER_X = ARENA_WIDTH / 2
+export const PLAYER_Y = ARENA_HEIGHT - 48
+
 export type Phase = 'title' | 'playing' | 'over'
 export type EnemyKind = 'drone' | 'swarm' | 'tank' | 'sprinter' | 'shield'
+
+/**
+ * Something the player should see and hear about.
+ *
+ * The session does not know what a particle or an oscillator is, so it says
+ * what happened and where, and leaves the answer to the caller. Feedback is
+ * drained once per frame rather than pushed through a callback, which keeps
+ * audio and effects out of the keystroke path entirely.
+ */
+export type FeedbackKind = 'hit' | 'miss' | 'kill' | 'breach' | 'promote'
+
+export interface Feedback {
+  kind: FeedbackKind
+  /** Where in the arena it happened. */
+  x: number
+  y: number
+  /** How far through the word it left the player, in [0, 1]. */
+  progress: number
+  /** The combo tier at that moment. */
+  tier: ComboTier
+}
+
+/** Undrained feedback is dropped rather than accumulated. Nothing here is worth a leak. */
+const FEEDBACK_LIMIT = 96
 
 export interface Enemy {
   id: string
@@ -44,6 +72,8 @@ export interface Enemy {
   speed: number
   typed: number
   spawnedAtMs: number
+  /** When it was last struck, so the renderer can make it flinch. */
+  hitAtMs: number
 }
 
 export interface Beam {
@@ -143,6 +173,7 @@ export class RunSession {
 
   private lastInputAtMs = 0
   private lastTier: ComboTier = 'flat'
+  private feedback: Feedback[] = []
   private rng: Rng = createRng(1)
   private recorder: EventRecorder = createRecorder('idle')
   private comboTracker = new ComboTracker()
@@ -191,6 +222,7 @@ export class RunSession {
     this.promotedTier = null
     this.lastInputAtMs = nowMs
     this.lastTier = 'flat'
+    this.feedback = []
 
     this.nextEnemyId = 1
     this.spawnTimerMs = 900
@@ -236,6 +268,7 @@ export class RunSession {
         // A breach is the plainest break in flow the game has, so it costs
         // combo even though nothing was mistyped.
         this.comboTracker.registerError()
+        this.emit('breach', enemy.x, BASELINE_Y, 0)
         if (enemy.id === this.lockedId) this.cancelLock(nowMs)
       }
       this.lastErrorAtMs = nowMs
@@ -279,8 +312,28 @@ export class RunSession {
     if (TIER_ORDER.indexOf(tier) > TIER_ORDER.indexOf(this.lastTier)) {
       this.promotedTier = tier
       this.tierPromotedAtMs = nowMs
+      this.emit('promote', PLAYER_X, PLAYER_Y, 1)
     }
     this.lastTier = tier
+  }
+
+  private emit(kind: FeedbackKind, x: number, y: number, progress: number): void {
+    if (this.feedback.length >= FEEDBACK_LIMIT) this.feedback.shift()
+    this.feedback.push({ kind, x, y, progress, tier: this.comboTracker.tier() })
+  }
+
+  /**
+   * Takes everything that has happened since the last call.
+   *
+   * Draining rather than reading keeps the caller honest: a frame that skips
+   * the queue drops the events instead of replaying them late, and stale
+   * feedback is worse than none.
+   */
+  drainFeedback(): Feedback[] {
+    if (this.feedback.length === 0) return []
+    const events = this.feedback
+    this.feedback = []
+    return events
   }
 
   /** Handle one printable character. */
@@ -338,6 +391,7 @@ export class RunSession {
       this.prefixTimesMs = []
       this.lastErrorAtMs = nowMs
       this.comboTracker.registerError()
+      this.emit('miss', PLAYER_X, PLAYER_Y, 0)
       // The miss ends the current measurement window along with the prefix, so
       // it is charged here and not again in the next word's accuracy.
       this.beginWordWindow()
@@ -388,7 +442,9 @@ export class RunSession {
     this.prefix = ''
     this.prefixTimesMs = []
     this.lastHitAtMs = nowMs
+    enemy.hitAtMs = nowMs
     this.beams.push({ x: enemy.x, y: enemy.y, untilMs: nowMs + 90 })
+    this.emit('hit', enemy.x, enemy.y, result.typed / enemy.word.length)
 
     this.recorder.record({
       timestampMs: nowMs,
@@ -508,6 +564,7 @@ export class RunSession {
     if (result.kind === 'wrong') {
       this.lastErrorAtMs = nowMs
       this.comboTracker.registerError()
+      this.emit('miss', enemy.x, enemy.y, result.typed / enemy.word.length)
       if (previousKey !== null && result.expected !== '') {
         this.transitions.observe(previousKey, result.expected, 0, false)
       }
@@ -538,7 +595,9 @@ export class RunSession {
     this.wordKeys.push(char)
     this.wordTimesMs.push(nowMs)
     this.lastHitAtMs = nowMs
+    enemy.hitAtMs = nowMs
     this.beams.push({ x: enemy.x, y: enemy.y, untilMs: nowMs + 90 })
+    this.emit('hit', enemy.x, enemy.y, result.typed / enemy.word.length)
 
     if (previousKey !== null && previousTime !== undefined) {
       this.transitions.observe(previousKey, char, nowMs - previousTime, true)
@@ -565,6 +624,7 @@ export class RunSession {
     this.enemies = this.enemies.filter((e) => e.id !== enemy.id)
     this.lockedId = null
     this.kills += 1
+    this.emit('kill', enemy.x, enemy.y, 1)
     this.completedChars += enemy.word.length
 
     const firstKeyMs = this.wordTimesMs[0]
@@ -647,6 +707,7 @@ export class RunSession {
         speed: archetype.speed * this.rng.range(0.9, 1.1),
         typed: 0,
         spawnedAtMs: this.nowMs,
+        hitAtMs: -Infinity,
       })
     }
   }

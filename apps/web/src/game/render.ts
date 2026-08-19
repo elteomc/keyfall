@@ -1,9 +1,11 @@
-import type { ComboTier } from '@keyfall/typing-core'
-
+import type { Effects } from './effects'
+import { TIER_RGB } from './palette'
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
   BASELINE_Y,
+  PLAYER_X,
+  PLAYER_Y,
   REVEAL_Y,
   type Enemy,
   type RunSession,
@@ -33,17 +35,23 @@ const FONT = '600 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 /** How far above the arena the fade-in begins, in arena units. */
 const FADE_START = 30
 
-/**
- * Combo tier is shown as colour, not as a number. The tier name appears only
- * at the moment it is won, then fades, so flow is felt rather than read.
- */
-const TIER_RGB: Record<ComboTier, string> = {
-  flat: '143, 214, 255',
-  warm: '157, 242, 184',
-  hot: '242, 198, 109',
-  peak: '255, 157, 122',
-}
 const TIER_FLASH_MS = 1000
+
+/**
+ * How much the arena glows at each tier.
+ *
+ * This is the "subtle screen energy" of section 13, and subtle is the whole
+ * specification: the top tier is a faint warm edge, not a light show. Combo
+ * tier is shown as colour, never as a number, so this and the marker are how
+ * flow is felt without reading anything.
+ */
+const TIER_GLOW = { flat: 0, warm: 0.05, hot: 0.1, peak: 0.16 }
+
+/** A hit brightens the glow for a moment, so the arena breathes with the typing. */
+const GLOW_PULSE_MS = 220
+
+/** How long a struck word keeps recoiling. */
+const HIT_FLINCH_MS = 110
 
 interface Viewport {
   scale: number
@@ -71,6 +79,7 @@ function enemyColor(enemy: Enemy): string {
 export function render(
   ctx: CanvasRenderingContext2D,
   session: RunSession,
+  effects: Effects,
   width: number,
   height: number,
   nowMs: number,
@@ -80,7 +89,15 @@ export function render(
   ctx.fillRect(0, 0, width, height)
 
   const view = viewportFor(width, height)
-  ctx.setTransform(view.scale, 0, 0, view.scale, view.offsetX, view.offsetY)
+  const shake = effects.shakeOffset()
+  ctx.setTransform(
+    view.scale,
+    0,
+    0,
+    view.scale,
+    view.offsetX + shake.x * view.scale,
+    view.offsetY + shake.y * view.scale,
+  )
 
   // Everything is clipped to the arena rect. Enemies start above the top edge,
   // and without this they would draw into the letterboxed margin.
@@ -92,7 +109,9 @@ export function render(
   drawGrid(ctx)
   drawBaseline(ctx, session)
   drawBeams(ctx, session, nowMs)
-  drawEnemies(ctx, session)
+  drawEnemies(ctx, session, nowMs)
+  effects.draw(ctx)
+  drawGlow(ctx, session, nowMs)
   drawTierFlash(ctx, session, nowMs)
   drawHud(ctx, session)
 
@@ -102,6 +121,37 @@ export function render(
   }
 
   ctx.restore()
+}
+
+/**
+ * A glow around the edges of the arena, in the tier's colour.
+ *
+ * Drawn as a radial gradient that is transparent in the middle, so it never
+ * competes with the words the player is reading. It brightens for a moment on
+ * every hit, which is what makes a clean streak feel like it is charging.
+ */
+function drawGlow(ctx: CanvasRenderingContext2D, session: RunSession, nowMs: number): void {
+  const tier = session.comboTier()
+  const base = TIER_GLOW[tier]
+  if (base <= 0) return
+
+  const sinceHit = nowMs - session.lastHitAtMs
+  const pulse = sinceHit >= 0 && sinceHit < GLOW_PULSE_MS ? 1 - sinceHit / GLOW_PULSE_MS : 0
+  const strength = base * (1 + 0.6 * pulse)
+
+  const gradient = ctx.createRadialGradient(
+    ARENA_WIDTH / 2,
+    ARENA_HEIGHT / 2,
+    ARENA_HEIGHT * 0.35,
+    ARENA_WIDTH / 2,
+    ARENA_HEIGHT / 2,
+    ARENA_WIDTH * 0.72,
+  )
+  gradient.addColorStop(0, `rgba(${TIER_RGB[tier]}, 0)`)
+  gradient.addColorStop(1, `rgba(${TIER_RGB[tier]}, ${strength})`)
+
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT)
 }
 
 /** Opacity ramp that ends exactly where an enemy becomes targetable. */
@@ -136,13 +186,11 @@ function drawBaseline(ctx: CanvasRenderingContext2D, session: RunSession): void 
   ctx.stroke()
   ctx.setLineDash([])
 
-  const px = ARENA_WIDTH / 2
-  const py = ARENA_HEIGHT - 34
   ctx.fillStyle = `rgb(${TIER_RGB[session.comboTier()]})`
   ctx.beginPath()
-  ctx.moveTo(px, py - 18)
-  ctx.lineTo(px + 15, py + 12)
-  ctx.lineTo(px - 15, py + 12)
+  ctx.moveTo(PLAYER_X, PLAYER_Y - 4)
+  ctx.lineTo(PLAYER_X + 15, PLAYER_Y + 26)
+  ctx.lineTo(PLAYER_X - 15, PLAYER_Y + 26)
   ctx.closePath()
   ctx.fill()
 
@@ -150,25 +198,23 @@ function drawBaseline(ctx: CanvasRenderingContext2D, session: RunSession): void 
   ctx.font = '500 14px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
   ctx.textAlign = 'center'
   const lives = '♥ '.repeat(Math.max(0, session.lives)).trim()
-  ctx.fillText(lives, px, ARENA_HEIGHT - 6)
+  ctx.fillText(lives, PLAYER_X, ARENA_HEIGHT - 6)
 }
 
 function drawBeams(ctx: CanvasRenderingContext2D, session: RunSession, nowMs: number): void {
-  const px = ARENA_WIDTH / 2
-  const py = ARENA_HEIGHT - 48
   const rgb = TIER_RGB[session.comboTier()]
   ctx.lineWidth = 2
   for (const beam of session.beams) {
     const life = Math.max(0, (beam.untilMs - nowMs) / 90)
     ctx.strokeStyle = `rgba(${rgb}, ${0.55 * life})`
     ctx.beginPath()
-    ctx.moveTo(px, py)
+    ctx.moveTo(PLAYER_X, PLAYER_Y)
     ctx.lineTo(beam.x, beam.y)
     ctx.stroke()
   }
 }
 
-function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
+function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession, nowMs: number): void {
   ctx.font = FONT
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -179,6 +225,13 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
     const isCandidate = session.prefix.length > 0 && enemy.word.startsWith(session.prefix)
     const highlight = isLocked ? enemy.typed : isCandidate ? session.prefix.length : 0
 
+    // The struck word recoils and flares for a moment. This is the enemy hit
+    // response of section 13, and it is what makes a key feel like it landed
+    // on something rather than merely advancing a counter.
+    const sinceHit = nowMs - enemy.hitAtMs
+    const flinch = sinceHit >= 0 && sinceHit < HIT_FLINCH_MS ? 1 - sinceHit / HIT_FLINCH_MS : 0
+    const y = enemy.y - flinch * 3
+
     const done = enemy.word.slice(0, highlight)
     const rest = enemy.word.slice(highlight)
     const width = ctx.measureText(enemy.word).width
@@ -186,7 +239,7 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
     if (isLocked) {
       ctx.fillStyle = COLORS.locked
       ctx.beginPath()
-      ctx.roundRect(enemy.x - width / 2 - 12, enemy.y - 20, width + 24, 40, 8)
+      ctx.roundRect(enemy.x - width / 2 - 12, y - 20, width + 24, 40, 8)
       ctx.fill()
     }
 
@@ -195,12 +248,12 @@ function drawEnemies(ctx: CanvasRenderingContext2D, session: RunSession): void {
     const left = enemy.x - (doneWidth + restWidth) / 2
 
     ctx.textAlign = 'left'
-    ctx.fillStyle = isLocked ? COLORS.typed : COLORS.candidate
-    ctx.fillText(done, left, enemy.y)
+    ctx.fillStyle = flinch > 0 ? COLORS.hudStrong : isLocked ? COLORS.typed : COLORS.candidate
+    ctx.fillText(done, left, y)
     ctx.fillStyle = enemyColor(enemy)
-    ctx.fillText(rest, left + doneWidth, enemy.y)
+    ctx.fillText(rest, left + doneWidth, y)
 
-    drawArchetypeMark(ctx, enemy, left, doneWidth + restWidth)
+    drawArchetypeMark(ctx, enemy, left, doneWidth + restWidth, y)
   }
 
   ctx.globalAlpha = 1
@@ -215,11 +268,12 @@ function drawArchetypeMark(
   enemy: Enemy,
   left: number,
   width: number,
+  y: number,
 ): void {
   if (enemy.kind === 'tank') {
     // A bar under the longest words, making their length readable at a glance.
     ctx.fillStyle = 'rgba(255, 157, 122, 0.35)'
-    ctx.fillRect(left, enemy.y + 18, width, 2)
+    ctx.fillRect(left, y + 18, width, 2)
     return
   }
 
@@ -229,15 +283,15 @@ function drawArchetypeMark(
     ctx.strokeStyle = 'rgba(127, 227, 212, 0.5)'
     ctx.lineWidth = 1.5
     ctx.beginPath()
-    ctx.roundRect(left - 9, enemy.y - 17, width + 18, 34, 7)
+    ctx.roundRect(left - 9, y - 17, width + 18, 34, 7)
     ctx.stroke()
 
     const held = enemy.word.length === 0 ? 0 : enemy.typed / enemy.word.length
     if (held > 0) {
       ctx.strokeStyle = 'rgba(127, 227, 212, 0.95)'
       ctx.beginPath()
-      ctx.moveTo(left - 9, enemy.y + 17)
-      ctx.lineTo(left - 9 + (width + 18) * held, enemy.y + 17)
+      ctx.moveTo(left - 9, y + 17)
+      ctx.lineTo(left - 9 + (width + 18) * held, y + 17)
       ctx.stroke()
     }
     return
@@ -248,12 +302,12 @@ function drawArchetypeMark(
     ctx.strokeStyle = 'rgba(185, 167, 255, 0.4)'
     ctx.lineWidth = 2
     ctx.beginPath()
-    ctx.moveTo(enemy.x, enemy.y - 20)
-    ctx.lineTo(enemy.x, enemy.y - 34)
-    ctx.moveTo(enemy.x - 7, enemy.y - 24)
-    ctx.lineTo(enemy.x - 7, enemy.y - 32)
-    ctx.moveTo(enemy.x + 7, enemy.y - 24)
-    ctx.lineTo(enemy.x + 7, enemy.y - 32)
+    ctx.moveTo(enemy.x, y - 20)
+    ctx.lineTo(enemy.x, y - 34)
+    ctx.moveTo(enemy.x - 7, y - 24)
+    ctx.lineTo(enemy.x - 7, y - 32)
+    ctx.moveTo(enemy.x + 7, y - 24)
+    ctx.lineTo(enemy.x + 7, y - 32)
     ctx.stroke()
   }
 }

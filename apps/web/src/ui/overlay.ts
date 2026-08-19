@@ -27,6 +27,7 @@ function titleCard(): string {
         <li>A wrong key keeps the lock. It costs accuracy, not your target.</li>
         <li>Escape releases the current target.</li>
         <li>Three breaches end the run.</li>
+        <li><kbd>Ctrl</kbd>+<kbd>M</kbd> turns the sound off and on.</li>
       </ul>
       <p class="prompt">Press <kbd>Enter</kbd> to start</p>
       <p class="note">Keystrokes are recorded only while a run is active, and only in this browser.</p>

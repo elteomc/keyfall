@@ -1,4 +1,6 @@
 import './style.css'
+import { GameAudio } from './game/audio'
+import { Effects } from './game/effects'
 import { render } from './game/render'
 import { RunSession } from './game/session'
 import { renderOverlay } from './ui/overlay'
@@ -15,6 +17,10 @@ const overlay = overlayElement
 const ctx = context
 
 const session = new RunSession()
+const audio = new GameAudio()
+const effects = new Effects({
+  reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+})
 let lastFrameMs = performance.now()
 let overlayPhase: string | null = null
 
@@ -30,8 +36,20 @@ function frame(nowMs: number): void {
   const dtMs = Math.min(nowMs - lastFrameMs, 100)
   lastFrameMs = nowMs
 
-  if (!document.hidden) session.update(nowMs, dtMs)
-  render(ctx, session, canvas.width, canvas.height, nowMs)
+  if (!document.hidden) {
+    session.update(nowMs, dtMs)
+
+    // Drained once per frame rather than handled on the keystroke, so nothing
+    // in the audio or particle path can ever sit between a key and its effect
+    // on the game state.
+    for (const event of session.drainFeedback()) {
+      audio.play(event)
+      effects.push(event)
+    }
+    effects.update(dtMs)
+  }
+
+  render(ctx, session, effects, canvas.width, canvas.height, nowMs)
 
   if (session.phase !== overlayPhase) {
     overlayPhase = session.phase
@@ -48,12 +66,24 @@ function isTypingKey(event: KeyboardEvent): boolean {
 window.addEventListener('keydown', (event) => {
   const nowMs = performance.now()
 
+  // Ctrl is deliberate: every unmodified printable key belongs to the game, so
+  // a settings shortcut cannot be one.
+  if (event.key.toLowerCase() === 'm' && event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault()
+    audio.toggleMute()
+    return
+  }
+
   if (session.phase !== 'playing') {
     // Enter is the only restart key. Space would restart on a keystroke the
     // player had already sent, skipping the summary of the run they just lost.
     if (event.key === 'Enter') {
       event.preventDefault()
       lastFrameMs = nowMs
+      // Browsers only allow audio to start from a gesture, and this is the
+      // gesture the game already has.
+      audio.resume()
+      effects.clear()
       session.start(nowMs)
       renderOverlay(overlay, session)
       overlayPhase = session.phase

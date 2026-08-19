@@ -39,7 +39,17 @@ function driver(seed = 42) {
 
 /** A revealed enemy parked at a known height, for tests that need exact words. */
 function fakeEnemy(id: string, word: string, y: number): Enemy {
-  return { id, word, kind: 'drone', x: 500, y, speed: 0, typed: 0, spawnedAtMs: 0 }
+  return {
+    id,
+    word,
+    kind: 'drone',
+    x: 500,
+    y,
+    speed: 0,
+    typed: 0,
+    spawnedAtMs: 0,
+    hitAtMs: -Infinity,
+  }
 }
 
 /** Types a run of clean words, one target at a time, to build a combo. */
@@ -482,6 +492,52 @@ describe('RunSession', () => {
 
     expect(shaky.session.kills).toBe(clean.session.kills)
     expect(shaky.session.score).toBeLessThan(clean.session.score)
+  })
+
+  test('feedback is emitted for every event worth seeing and hearing', () => {
+    const run = driver()
+    run.advance(4000)
+    run.session.drainFeedback()
+
+    run.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    run.type('ve', 90)
+    run.type('q', 90)
+    run.type('ctor', 90)
+
+    const kinds = run.session.drainFeedback().map((f) => f.kind)
+    expect(kinds.filter((k) => k === 'hit')).toHaveLength(6)
+    expect(kinds).toContain('miss')
+    expect(kinds).toContain('kill')
+
+    // Draining is destructive, so nothing is replayed a frame late.
+    expect(run.session.drainFeedback()).toEqual([])
+  })
+
+  test('a hit reports where it landed and how far the word has come', () => {
+    const run = driver()
+    run.advance(4000)
+    run.session.drainFeedback()
+
+    run.session.enemies = [fakeEnemy('a', 'vector', 200)]
+    run.type('vec', 90)
+
+    const hits = run.session.drainFeedback().filter((f) => f.kind === 'hit')
+    expect(hits.map((h) => h.progress)).toEqual([1 / 6, 2 / 6, 3 / 6])
+    expect(hits.every((h) => h.x === 500 && h.y === 200)).toBe(true)
+    expect(run.session.enemies[0]!.hitAtMs).toBe(run.now())
+  })
+
+  test('undrained feedback is bounded rather than accumulated', () => {
+    const run = driver()
+    run.advance(4000)
+
+    for (let round = 0; round < 40; round++) {
+      run.session.enemies = [fakeEnemy(`c${round}`, 'vector', 200)]
+      run.type('vector', 90)
+    }
+
+    // Seven events per word against a queue nobody drained.
+    expect(run.session.drainFeedback().length).toBeLessThanOrEqual(96)
   })
 
   test('a breach costs the combo as well as a life', () => {
