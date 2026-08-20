@@ -37,6 +37,41 @@ function driver(seed = 42) {
   }
 }
 
+/**
+ * A player who keeps the arena clear by actually typing it clear.
+ *
+ * Wiping `enemies` directly is no longer a strong player. The director measures
+ * load against the player's own typing speed, so an arena that empties without
+ * a keystroke reads as a slow typist drowning rather than a fast one coasting.
+ */
+function typeEverything(run: ReturnType<typeof driver>, intervalMs = 30): void {
+  const session = run.session
+  let guard = 0
+
+  while (session.targets().length > 0 && guard++ < 300) {
+    const locked = session.lockedEnemy()
+    if (locked) {
+      const char = locked.word[locked.typed]
+      if (char === undefined) break
+      run.type(char, intervalMs)
+      continue
+    }
+
+    // Follow the session's own prefix. Restarting each word instead would turn
+    // every shared first letter into a miss, which models someone fighting the
+    // lock rather than a strong player.
+    const matching = session.targets().filter((e) => e.word.startsWith(session.prefix))
+    if (matching.length === 0) {
+      session.cancelLock()
+      break
+    }
+    const target = matching.reduce((a, b) => (b.y > a.y ? b : a))
+    const char = target.word[session.prefix.length]
+    if (char === undefined) break
+    run.type(char, intervalMs)
+  }
+}
+
 /** A revealed enemy parked at a known height, for tests that need exact words. */
 function fakeEnemy(id: string, word: string, y: number): Enemy {
   return {
@@ -369,14 +404,13 @@ describe('RunSession', () => {
     const speeds: Partial<Record<string, number>> = {}
     const lengths: Partial<Record<string, number>> = {}
     for (let tick = 0; tick < 600; tick++) {
-      run.advance(120)
+      run.advance(200)
       for (const enemy of run.session.enemies) {
         speeds[enemy.kind] = Math.max(speeds[enemy.kind] ?? 0, enemy.speed)
         lengths[enemy.kind] = Math.max(lengths[enemy.kind] ?? 0, enemy.word.length)
       }
-      // A player who clears everything, so the director sees low pressure and
-      // the run is allowed to get harder.
-      run.session.enemies = []
+      // A player who clears everything, so the director sees room to escalate.
+      typeEverything(run)
     }
 
     expect(speeds.sprinter).toBeGreaterThan(speeds.tank!)
@@ -389,12 +423,12 @@ describe('RunSession', () => {
     const all = new Set<string>()
 
     for (let tick = 0; tick < 600; tick++) {
-      run.advance(120)
+      run.advance(200)
       for (const enemy of run.session.enemies) {
         all.add(enemy.kind)
         if (run.session.elapsedMs < 10000) early.add(enemy.kind)
       }
-      run.session.enemies = []
+      typeEverything(run)
     }
 
     expect([...early]).toEqual(['drone'])

@@ -1,3 +1,5 @@
+import type { Observation } from '@keyfall/typing-core'
+
 import type { RunSession, RunSummary } from '../game/session'
 
 /**
@@ -36,6 +38,64 @@ function titleCard(): string {
   `
 }
 
+function percent(value: number | undefined): string {
+  return `${((value ?? 0) * 100).toFixed(0)}%`
+}
+
+/**
+ * Turns one observation into a sentence.
+ *
+ * Section 12 of the product spec asks for hedged wording until the sample
+ * supports more, so the verb is chosen from `confidence` and from nothing else.
+ * The analysis in `typing-core` decides how sure it is, and this decides how
+ * that sounds. Keeping those apart is what stops the copy from quietly
+ * promoting a tentative finding into a fact.
+ */
+function observationText(o: Observation): string {
+  const sure = o.confidence === 'settled'
+
+  switch (o.kind) {
+    case 'slowest-transition': {
+      const many = o.digrams.length > 1
+      const names = o.digrams.map((d) => `<code>${d}</code>`).join(' and ')
+      const ms = Math.round(Math.max(...o.values, 0))
+      return sure
+        ? `${names} ${many ? 'were' : 'was'} your slowest ${many ? 'transitions' : 'transition'} this run, around ${ms} ms.`
+        : `${names} ${many ? 'seem' : 'seems'} to be among your slower transitions so far, around ${ms} ms.`
+    }
+
+    case 'accuracy-under-pressure': {
+      const calm = percent(o.values[0])
+      const pressed = percent(o.values[1])
+      if (o.direction === 'worse') {
+        return sure
+          ? `Your accuracy dropped when the arena was crowded, ${pressed} against ${calm}.`
+          : `Your accuracy seemed to slip when the arena was crowded, ${pressed} against ${calm}.`
+      }
+      if (o.direction === 'better') {
+        return sure
+          ? `You held accuracy under a crowded arena, ${pressed} against ${calm}.`
+          : `You seemed to hold accuracy under a crowded arena, ${pressed} against ${calm}.`
+      }
+      return `A crowded arena cost you a little accuracy, ${pressed} against ${calm}.`
+    }
+
+    case 'rhythm-drift': {
+      if (o.direction === 'better') {
+        return sure
+          ? 'Your rhythm was steadier in the second half than the first.'
+          : 'Your rhythm seemed steadier in the second half than the first.'
+      }
+      if (o.direction === 'worse') {
+        return sure
+          ? 'Your rhythm was less even by the end of the run.'
+          : 'Your rhythm seemed less even by the end of the run.'
+      }
+      return 'Your rhythm held steady from start to finish.'
+    }
+  }
+}
+
 function summaryCard(summary: RunSummary | null): string {
   if (!summary) return '<section class="card"><h1>Run over</h1></section>'
 
@@ -55,10 +115,21 @@ function summaryCard(summary: RunSummary | null): string {
           )
           .join('')
 
+  const verdict =
+    summary.outcome === 'cleared'
+      ? `Run cleared in ${clock}. You held the final wave, ${summary.kills} targets down.`
+      : `${summary.kills} targets down in ${clock}.`
+
+  const observations =
+    summary.observations.length === 0
+      ? ''
+      : `<h2>What this run suggests</h2>
+      <ul class="observations">${summary.observations.map((o) => `<li>${observationText(o)}</li>`).join('')}</ul>`
+
   return `
     <section class="card">
       <h1>${summary.score}</h1>
-      <p class="lede">${summary.kills} targets down in ${clock}</p>
+      <p class="lede">${verdict}</p>
       <dl class="stats">
         <div><dt>effective wpm</dt><dd>${summary.wpm.toFixed(0)}</dd></div>
         <div><dt>accuracy</dt><dd>${(summary.accuracy * 100).toFixed(1)}%</dd></div>
@@ -66,6 +137,7 @@ function summaryCard(summary: RunSummary | null): string {
         <div><dt>rhythm</dt><dd>${rhythm}</dd></div>
         <div><dt>target acquisition</dt><dd>${acquisition}</dd></div>
       </dl>
+      ${observations}
       <h2>Slowest well sampled transitions</h2>
       <ul class="transitions">${slowest}</ul>
       <p class="prompt">Press <kbd>Enter</kbd> to run again</p>

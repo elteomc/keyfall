@@ -30,6 +30,10 @@ export interface DirectorSignals {
   nearestProgress: number
   /** Lives lost since the last update. */
   livesLost: number
+  /** Characters that entered the arena since the last update. */
+  charsArrived: number
+  /** The player's own typing speed, in characters per minute. */
+  capacityCpm: number
 }
 
 export interface SpawnPlan {
@@ -60,6 +64,17 @@ const FALL_PER_SECOND = 0.022
 const BREACH_RELIEF = 0.08
 
 /**
+ * Time constant of the arrival-rate estimate.
+ *
+ * Long enough that one burst of swarm does not read as a permanent flood,
+ * short enough to follow the run.
+ */
+const ARRIVAL_TAU_MS = 9000
+
+/** A baseline below this is a measurement artefact, not a slow typist. */
+const MIN_CAPACITY_CPM = 60
+
+/**
  * Intensity at which each archetype starts appearing.
  *
  * This replaces the fixed elapsed-time thresholds the session used to carry.
@@ -85,12 +100,16 @@ function lerp(a: number, b: number, t: number): number {
 export class Director {
   private intensity = 0
   private pressure = 0
+  private load = 0
   /** How long the pressure reading has sat outside the band, signed. */
   private heldMs = 0
+  private arrivalChars = 0
+  private arrivalWindowMs = 0
 
   update(dtMs: number, signals: DirectorSignals): void {
     if (dtMs <= 0) return
 
+    this.trackArrivals(dtMs, signals.charsArrived)
     this.pressure = this.readPressure(signals)
 
     if (signals.livesLost > 0) {
@@ -146,15 +165,63 @@ export class Director {
     }
   }
 
+  /** Share of the player's typing speed the arena is currently demanding. */
+  currentLoad(): number {
+    return this.load
+  }
+
   /**
    * How hard the player is being pushed right now.
    *
-   * Crowding and proximity only. Skill signals are deliberately absent: the
-   * player's own speed and accuracy already show up here, as an arena that
-   * empties out.
+   * Two readings, and the worse one wins.
+   *
+   * Crowding and proximity say how bad things are *now*. On their own they are
+   * a lagging indicator, and dangerously so: a player clearing words as fast as
+   * they arrive leaves one or two on screen whether they are working at a third
+   * of their speed or at the very edge of it. Queue length stays near zero right
+   * up to the moment arrivals outpace the player, and then it runs away. Steered
+   * on crowding alone the dial climbed for over two minutes against a reading of
+   * 0.1, and the run collapsed from two enemies to eleven in twenty seconds.
+   *
+   * Load is the leading indicator that fixes it: characters arriving per minute
+   * against the player's own measured characters per minute. At 0.4 the arena is
+   * asking for less than half of them and there is real room. Approaching 1.0 it
+   * is asking for everything they have, which is the edge, and it says so before
+   * the backlog exists rather than after.
+   *
+   * Load feeds the band directly, so arrivals settle between 0.3 and 0.6 of the
+   * baseline. That is less timid than it looks. The baseline counts only speed
+   * *inside* a word, so it excludes the time spent reading the arena and picking
+   * the next target, and real throughput is well below it. Half the baseline is
+   * a large share of what a player can actually sustain.
+   *
+   * This is a skill signal, which D10 deliberately excluded and D14 puts back.
+   * It is not rubber-banding: nothing here reacts to *how well* the player is
+   * doing, only to how much of their demonstrated speed the game is spending.
+   * The deadband, the lag and the capped rate all still stand between this
+   * reading and the dial.
    */
   private readPressure(signals: DirectorSignals): number {
     const density = clamp01(signals.enemies / 7)
-    return clamp01(0.5 * density + 0.5 * clamp01(signals.nearestProgress))
+    const crowding = clamp01(0.5 * density + 0.5 * clamp01(signals.nearestProgress))
+
+    const capacity = Math.max(MIN_CAPACITY_CPM, signals.capacityCpm)
+    this.load = this.arrivalWindowMs > 0
+      ? this.arrivalChars / (this.arrivalWindowMs / 60000) / capacity
+      : 0
+
+    return Math.max(crowding, clamp01(this.load))
+  }
+
+  /**
+   * Time-decayed arrival estimate.
+   *
+   * Both the character count and the window it covers decay together, so the
+   * ratio is a rate that follows the run instead of an average over all of it.
+   */
+  private trackArrivals(dtMs: number, charsArrived: number): void {
+    const decay = Math.exp(-dtMs / ARRIVAL_TAU_MS)
+    this.arrivalChars = this.arrivalChars * decay + charsArrived
+    this.arrivalWindowMs = this.arrivalWindowMs * decay + dtMs
   }
 }

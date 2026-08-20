@@ -2,11 +2,13 @@ import {
   type ComboTier,
   type ErrorPolicy,
   type EventRecorder,
+  type Observation,
   type TransitionStat,
   ComboTracker,
   TransitionTable,
   accuracy,
   createRecorder,
+  deriveObservations,
   interKeyIntervals,
   mean,
   resolveLockedKey,
@@ -19,6 +21,7 @@ import { type Band, pickWord } from './corpus'
 import { Director } from './director'
 import { type Rng, createRng } from './rng'
 import { wordScore } from './scoring'
+import { type RunStage, finaleWaveSize, intervalScaleAt, stageAt } from './stages'
 
 /** The arena is a fixed logical space. The renderer scales it to the window. */
 export const ARENA_WIDTH = 1000
@@ -82,7 +85,16 @@ export interface Beam {
   untilMs: number
 }
 
+/**
+ * How a run finished.
+ *
+ * A run that can only end in failure has no arc, so surviving the closing wave
+ * is a distinct outcome rather than a longer version of losing.
+ */
+export type RunOutcome = 'cleared' | 'breached'
+
 export interface RunSummary {
+  outcome: RunOutcome
   score: number
   timeMs: number
   kills: number
@@ -92,6 +104,8 @@ export interface RunSummary {
   rhythm: number | null
   acquisitionMs: number | null
   slowest: TransitionStat[]
+  /** At most three, per section 12 of the product spec. */
+  observations: Observation[]
 }
 
 interface Archetype {
@@ -182,6 +196,10 @@ export class RunSession {
   private nextEnemyId = 1
   private spawnTimerMs = 0
   private nowMs = 0
+  /** The closing wave arrives once. After it, nothing else spawns. */
+  private finaleSpawned = false
+  /** Characters added to the arena since the director last looked. */
+  private arrivedChars = 0
 
   private prefixTimesMs: number[] = []
   private wordTimesMs: number[] = []
@@ -228,6 +246,8 @@ export class RunSession {
     this.spawnTimerMs = 900
     this.nowMs = nowMs
     this.readyAtMs = nowMs
+    this.finaleSpawned = false
+    this.arrivedChars = 0
 
     this.prefixTimesMs = []
     this.wordTimesMs = []
@@ -273,7 +293,7 @@ export class RunSession {
       }
       this.lastErrorAtMs = nowMs
       if (this.lives <= 0) {
-        this.endRun()
+        this.endRun('breached')
         return
       }
     }
@@ -282,7 +302,13 @@ export class RunSession {
       enemies: this.enemies.length,
       nearestProgress: this.nearestProgress(),
       livesLost,
+      charsArrived: this.arrivedChars,
+      // The combo already measures the player's speed against their own pace,
+      // so the director asks it rather than keeping a second estimate that
+      // could disagree with the first.
+      capacityCpm: this.comboTracker.baselineCpm(),
     })
+    this.arrivedChars = 0
 
     // Dropped before spawning, so a dead prefix cannot silently attach itself
     // to a word that appears in the same tick.
@@ -295,13 +321,61 @@ export class RunSession {
       this.comboTracker.decay(dtMs)
     }
 
-    this.spawnTimerMs -= dtMs
-    if (this.spawnTimerMs <= 0) {
-      this.spawn()
-      this.spawnTimerMs = plan.intervalMs * this.rng.range(0.8, 1.2)
-    }
+    if (this.advanceArc(dtMs, plan.intervalMs)) return
 
     this.noteTierChange(nowMs)
+  }
+
+  /** Which part of the run's arc the player is in. */
+  stage(): RunStage {
+    return stageAt(this.elapsedMs)
+  }
+
+  /**
+   * Runs the arc: ordinary spawning, then the closing wave, then the end.
+   *
+   * Returns true once the run has finished, so the caller stops working on a
+   * world that is no longer live.
+   */
+  private advanceArc(dtMs: number, intervalMs: number): boolean {
+    if (this.stage() !== 'finale') {
+      this.spawnTimerMs -= dtMs
+      if (this.spawnTimerMs <= 0) {
+        this.spawn()
+        // The stage stretches the director's interval rather than replacing it,
+        // so a breath is still filled with whatever the player has earned.
+        this.spawnTimerMs =
+          intervalMs * intervalScaleAt(this.elapsedMs) * this.rng.range(0.8, 1.2)
+      }
+      return false
+    }
+
+    if (!this.finaleSpawned) {
+      this.spawnFinaleWave()
+      this.finaleSpawned = true
+      return false
+    }
+
+    // Nothing further will arrive, so the arena drains one way or the other and
+    // the run is guaranteed to terminate.
+    if (this.enemies.length === 0) {
+      this.endRun('cleared')
+      return true
+    }
+
+    return false
+  }
+
+  /**
+   * The closing wave.
+   *
+   * Spawning stops with it, so holding the line finishes the run rather than
+   * merely postponing the moment it is lost. That is the whole difference
+   * between a run with an ending and a run with only a failure.
+   */
+  private spawnFinaleWave(): void {
+    const wanted = finaleWaveSize(this.director.level())
+    for (let i = 0; i < wanted; i++) this.spawnOne(this.chooseKind(), i)
   }
 
   /** Records a climb so the renderer can name the new tier for a moment. */
@@ -692,24 +766,30 @@ export class RunSession {
     // A swarm arrives as a cluster of two or three, the rest one at a time.
     const count = archetype.burst > 1 ? archetype.burst - this.rng.int(2) : 1
 
-    for (let i = 0; i < count; i++) {
-      const active = new Set(this.enemies.map((e) => e.word))
-      const word = pickWord(archetype.band, this.rng, active)
+    for (let i = 0; i < count; i++) this.spawnOne(kind, i)
+  }
 
-      const y = -20 - i * 46
+  /** `row` staggers a cluster vertically so its words stay separately readable. */
+  private spawnOne(kind: EnemyKind, row: number): void {
+    const archetype = ARCHETYPES[kind]
+    const active = new Set(this.enemies.map((e) => e.word))
+    const word = pickWord(archetype.band, this.rng, active)
 
-      this.enemies.push({
-        id: `e${this.nextEnemyId++}`,
-        word,
-        kind,
-        x: this.placeX(word, y),
-        y,
-        speed: archetype.speed * this.rng.range(0.9, 1.1),
-        typed: 0,
-        spawnedAtMs: this.nowMs,
-        hitAtMs: -Infinity,
-      })
-    }
+    const y = -20 - row * 46
+
+    this.enemies.push({
+      id: `e${this.nextEnemyId++}`,
+      word,
+      kind,
+      x: this.placeX(word, y),
+      y,
+      speed: archetype.speed * this.rng.range(0.9, 1.1),
+      typed: 0,
+      spawnedAtMs: this.nowMs,
+      hitAtMs: -Infinity,
+    })
+
+    this.arrivedChars += word.length
   }
 
   /**
@@ -770,11 +850,17 @@ export class RunSession {
     return 'drone'
   }
 
-  private endRun(): void {
+  private endRun(outcome: RunOutcome): void {
     this.phase = 'over'
-    this.lives = 0
+    // A cleared run keeps whatever lives it finished with, so the summary can
+    // tell surviving apart from surviving comfortably.
+    if (outcome === 'breached') this.lives = 0
     this.cancelLock()
+
+    const slowest = this.transitions.slowest(5, 4)
+
     this.summary = {
+      outcome,
       score: this.score,
       timeMs: this.elapsedMs,
       kills: this.kills,
@@ -783,7 +869,12 @@ export class RunSession {
       peakBurstWpm: this.peakBurstWpm,
       rhythm: this.rhythmSamples.length > 0 ? mean(this.rhythmSamples) : null,
       acquisitionMs: this.acquisitionSamples.length > 0 ? mean(this.acquisitionSamples) : null,
-      slowest: this.transitions.slowest(5, 4),
+      slowest,
+      observations: deriveObservations({
+        events: this.recorder.events(),
+        slowest,
+        rhythmSamples: this.rhythmSamples,
+      }),
     }
   }
 }

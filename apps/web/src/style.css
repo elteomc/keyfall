@@ -105,6 +105,26 @@ body {
   color: var(--accent);
 }
 
+/* The observations carry the run's meaning, so they read as sentences rather
+   than as another row of statistics. */
+.observations {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.observations li {
+  padding: 7px 0 7px 14px;
+  border-left: 2px solid var(--line);
+  margin-bottom: 8px;
+}
+
+.observations code {
+  color: var(--accent);
+}
+
 .transitions {
   margin: 0;
   padding: 0;

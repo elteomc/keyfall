@@ -1,10 +1,19 @@
 import { describe, expect, test } from 'vitest'
 import { Director, type DirectorSignals } from '../src/game/director'
 
-const CALM: DirectorSignals = { enemies: 0, nearestProgress: 0, livesLost: 0 }
-const CROWDED: DirectorSignals = { enemies: 9, nearestProgress: 0.95, livesLost: 0 }
+/** A typist of ordinary speed, so load is read against a realistic capacity. */
+const CAPACITY_CPM = 350
+
+const CALM: DirectorSignals = {
+  enemies: 0,
+  nearestProgress: 0,
+  livesLost: 0,
+  charsArrived: 0,
+  capacityCpm: CAPACITY_CPM,
+}
+const CROWDED: DirectorSignals = { ...CALM, enemies: 9, nearestProgress: 0.95 }
 /** Reads inside the target band, where the director is meant to do nothing. */
-const STEADY: DirectorSignals = { enemies: 3, nearestProgress: 0.5, livesLost: 0 }
+const STEADY: DirectorSignals = { ...CALM, enemies: 3, nearestProgress: 0.5 }
 
 /** Feeds the director a signal for a stretch of time in 16 ms frames. */
 function hold(director: Director, ms: number, signals: DirectorSignals): void {
@@ -65,7 +74,7 @@ describe('Director', () => {
     hold(director, 20000, CALM)
     const before = director.level()
 
-    director.update(16, { enemies: 4, nearestProgress: 0.4, livesLost: 1 })
+    director.update(16, { ...CALM, enemies: 4, nearestProgress: 0.4, livesLost: 1 })
     expect(director.level()).toBeLessThan(before)
   })
 
