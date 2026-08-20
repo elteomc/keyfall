@@ -5,14 +5,7 @@ dist/
 .DS_Store
 .env
 .env.local
-
-# Working notes and planning material. These stay on the machine they were
-# written on. The repository publishes the game, not the process behind it.
-# quick.md is the exception, because it is the status file the README points at.
-AGENTS.md
 docs/
 deep.md
 transcript/
-.pingpong_resume.json
-.pingpong_draft.diff
-.pingpong_clean_draft.diff
+.pingpong*
