@@ -25,6 +25,7 @@ function titleCard(): string {
       <ul class="hints">
         <li>A shared first letter locks nothing. Type until the prefix is unique.</li>
         <li>A wrong key keeps the lock. It costs accuracy, not your target.</li>
+        <li>Shielded words are the exception. One slip and the word starts over.</li>
         <li>Escape releases the current target.</li>
         <li>Three breaches end the run.</li>
         <li><kbd>Ctrl</kbd>+<kbd>M</kbd> turns the sound off and on.</li>
