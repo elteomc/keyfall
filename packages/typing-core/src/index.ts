@@ -25,3 +25,13 @@ export { ComboTracker, comboGain } from './combo'
 
 export type { TransitionStat, TransitionTableOptions } from './transitions'
 export { TransitionTable } from './transitions'
+
+export type {
+  Confidence,
+  Direction,
+  Observation,
+  ObservationInput,
+  ObservationKind,
+  ObservationOptions,
+} from './observations'
+export { deriveObservations } from './observations'
