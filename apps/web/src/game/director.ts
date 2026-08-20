@@ -75,6 +75,20 @@ const ARRIVAL_TAU_MS = 9000
 const MIN_CAPACITY_CPM = 60
 
 /**
+ * The load that should read as the top of the band.
+ *
+ * Load fed the band directly at first, which meant arrivals were held between
+ * 30 and 60 percent of the player's measured speed and the dial could never ask
+ * for more than that. Playtesting called it exactly what it was: a slow trickle
+ * that never responded to how fast you were going.
+ *
+ * Mapping the top of the band to a load near 1.0 puts arrivals between roughly
+ * 48 and 95 percent of measured speed instead, so late in a run the arena is
+ * genuinely asking for everything the player has.
+ */
+const LOAD_AT_BAND_TOP = 0.95
+
+/**
  * Intensity at which each archetype starts appearing.
  *
  * This replaces the fixed elapsed-time thresholds the session used to carry.
@@ -189,11 +203,10 @@ export class Director {
    * is asking for everything they have, which is the edge, and it says so before
    * the backlog exists rather than after.
    *
-   * Load feeds the band directly, so arrivals settle between 0.3 and 0.6 of the
-   * baseline. That is less timid than it looks. The baseline counts only speed
-   * *inside* a word, so it excludes the time spent reading the arena and picking
-   * the next target, and real throughput is well below it. Half the baseline is
-   * a large share of what a player can actually sustain.
+   * Load is scaled so that `LOAD_AT_BAND_TOP` reads as the top of the band. The
+   * dial therefore holds arrivals somewhere near half to nearly all of the
+   * player's measured speed, rather than the timid third-to-half it held when
+   * load fed the band raw.
    *
    * This is a skill signal, which D10 deliberately excluded and D16 puts back.
    * It is not rubber-banding: nothing here reacts to *how well* the player is
@@ -210,7 +223,7 @@ export class Director {
       ? this.arrivalChars / (this.arrivalWindowMs / 60000) / capacity
       : 0
 
-    return Math.max(crowding, clamp01(this.load))
+    return Math.max(crowding, clamp01((this.load * BAND_HIGH) / LOAD_AT_BAND_TOP))
   }
 
   /**

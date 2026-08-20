@@ -1,59 +1,93 @@
 /**
  * The shape of a run.
  *
- * This is the one part of the game that still reads the clock, and the split
- * with the director is deliberate. The director decides how *hard* the run is,
- * from pressure alone, and D10 keeps the clock out of that entirely. The stage
- * decides only what *shape* the run has: when spawning thins for a breath, when
- * it stops for good, and therefore when the run is allowed to end.
+ * The arc used to be fixed time bands taken from section 9 of the game design,
+ * with the finale at 6:30 on the clock. Playtesting killed that. A player
+ * cannot see elapsed time, so a time-based arc is invisible, and the first
+ * report back was that the game felt identical from start to finish. Progress
+ * is the thing you actually feel.
  *
- * So difficulty still adapts to the player, and structure does not. A strong
- * player and a struggling one get the same arc, filled with different enemies.
+ * So the arc now advances on targets destroyed. A fast player earns the finale
+ * in about four minutes and a slower one gets closer to ten, and both of them
+ * get the same shape of run rather than the same length of one.
  *
- * The boundaries follow the eight minute example in section 9 of the game
- * design. Section 21 question 8 says the right run length is something to learn
- * from play rather than to argue about, so every number lives in one table.
+ * The clock survives in exactly one place, as a cap. A run that stalls has to
+ * end somewhere, and milestone 1 asks for runs inside a 5 to 10 minute window.
+ *
+ * The director still owns difficulty. The stage owns only shape: when arrivals
+ * thin for a breath, when they stop, and therefore when the run may end.
  */
 
 export type RunStage = 'calibration' | 'expansion' | 'pressure' | 'lull' | 'finale'
 
+/**
+ * Targets destroyed before the closing wave.
+ *
+ * Kills arrive at roughly the rate the director is feeding the player, which is
+ * itself a share of their typing speed, so a fixed target converts directly
+ * into "a run lasts until you have done enough", independent of how fast you
+ * are. Section 21 question 8 says run length is settled by play, so this is the
+ * one number to turn.
+ */
+export const FINALE_KILLS = 340
+
+/** No run may run longer than this, however badly it is going. */
+export const HARD_CAP_MS = 10 * 60 * 1000
+
 interface StageBand {
   stage: RunStage
-  /** Elapsed time at which this stage gives way to the next. */
-  untilMs: number
+  /** Fraction of the way to the finale at which this stage begins. */
+  from: number
   /** Multiplier on the director's spawn interval. Above 1 is a breath. */
   intervalScale: number
 }
 
 const BANDS: readonly StageBand[] = [
-  { stage: 'calibration', untilMs: 90_000, intervalScale: 1 },
-  { stage: 'expansion', untilMs: 210_000, intervalScale: 1 },
-  { stage: 'pressure', untilMs: 330_000, intervalScale: 1 },
-  // The lull is a real drop in arrivals rather than a pause, because a game
-  // that stops entirely reads as broken rather than as a breath.
-  { stage: 'lull', untilMs: 390_000, intervalScale: 2.4 },
-  { stage: 'finale', untilMs: Infinity, intervalScale: 1 },
+  { stage: 'calibration', from: 0, intervalScale: 1 },
+  { stage: 'expansion', from: 0.16, intervalScale: 1 },
+  { stage: 'pressure', from: 0.42, intervalScale: 1 },
+  // A real drop in arrivals rather than a pause, because a game that stops
+  // entirely reads as broken rather than as a breath.
+  { stage: 'lull', from: 0.88, intervalScale: 2.4 },
+  { stage: 'finale', from: 1, intervalScale: 1 },
 ]
 
-const LAST_BAND = BANDS[BANDS.length - 1]!
+export interface RunProgress {
+  kills: number
+  elapsedMs: number
+}
 
-function bandAt(elapsedMs: number): StageBand {
+/** How far through the arc the run is, in [0, 1]. */
+export function progressOf(run: RunProgress): number {
+  const byKills = run.kills / FINALE_KILLS
+  const byClock = run.elapsedMs / HARD_CAP_MS
+  return Math.min(1, Math.max(0, Math.max(byKills, byClock)))
+}
+
+function bandAt(progress: number): StageBand {
+  let found = BANDS[0]!
   for (const band of BANDS) {
-    if (elapsedMs < band.untilMs) return band
+    if (progress >= band.from) found = band
   }
-  return LAST_BAND
+  return found
 }
 
-export function stageAt(elapsedMs: number): RunStage {
-  return bandAt(elapsedMs).stage
+export function stageAt(run: RunProgress): RunStage {
+  return bandAt(progressOf(run)).stage
 }
 
-export function intervalScaleAt(elapsedMs: number): number {
-  return bandAt(elapsedMs).intervalScale
+export function intervalScaleAt(run: RunProgress): number {
+  return bandAt(progressOf(run)).intervalScale
 }
 
-/** When the closing wave arrives, and so the earliest a run can be cleared. */
-export const FINALE_AT_MS = BANDS[BANDS.length - 2]!.untilMs
+/** Human-facing name for the stage, shown when it changes. */
+export const STAGE_LABEL: Record<RunStage, string> = {
+  calibration: 'warming up',
+  expansion: 'expanding',
+  pressure: 'under pressure',
+  lull: 'catch your breath',
+  finale: 'final wave',
+}
 
 /**
  * How many enemies the closing wave brings.
@@ -65,5 +99,5 @@ export const FINALE_AT_MS = BANDS[BANDS.length - 2]!.untilMs
  */
 export function finaleWaveSize(intensity: number): number {
   const dial = Math.min(1, Math.max(0, intensity))
-  return 4 + Math.round(dial * 4)
+  return 5 + Math.round(dial * 5)
 }

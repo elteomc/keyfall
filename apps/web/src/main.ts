@@ -179,6 +179,18 @@ window.addEventListener('keydown', (event) => {
     }
   }
 
+  if (session.phase === 'paused') {
+    if (event.key === 'Escape' || event.key === 'Enter') {
+      event.preventDefault()
+      // The frame clock skips the paused stretch, so nothing moves on resume.
+      lastFrameMs = performance.now()
+      session.togglePause(nowMs)
+      renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+      overlayPhase = session.phase
+    }
+    return
+  }
+
   if (session.phase !== 'playing') {
     // Enter is the only restart key. Space would restart on a keystroke the
     // player had already sent, skipping the summary of the run they just lost.
@@ -199,7 +211,11 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (event.key === 'Escape') {
-    session.cancelLock(nowMs)
+    // Pausing releases the lock on the way in, so retreating from a word stays
+    // free exactly as D6 promised.
+    session.togglePause(nowMs)
+    renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+    overlayPhase = session.phase
     return
   }
 

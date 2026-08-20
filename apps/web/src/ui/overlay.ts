@@ -32,7 +32,9 @@ export function renderOverlay(
   root.innerHTML =
     session.phase === 'title'
       ? titleCard(context)
-      : summaryCard(session.currentSummary(), context)
+      : session.phase === 'paused'
+        ? pausedCard()
+        : summaryCard(session.currentSummary(), context)
 }
 
 function titleCard(context: OverlayContext): string {
@@ -42,9 +44,10 @@ function titleCard(context: OverlayContext): string {
       <p class="lede">Type the word to lock the target. Keep typing to destroy it.</p>
       <ul class="hints">
         <li>A shared first letter locks nothing. Type until the prefix is unique.</li>
-        <li>A wrong key keeps the lock. It costs accuracy, not your target.</li>
+        <li>A slip costs accuracy and combo, not the word. Keep going.</li>
         <li>Shielded words are the exception. One slip and the word starts over.</li>
-        <li>Escape releases the current target.</li>
+        <li>A hot streak absorbs one breach. A peak streak brings richer words.</li>
+        <li><kbd>Esc</kbd> pauses, and releases your current target.</li>
         <li>Three breaches end the run.</li>
         <li><kbd>Ctrl</kbd>+<kbd>M</kbd> turns the sound off and on.</li>
       </ul>
@@ -94,6 +97,17 @@ function beatenLine(context: OverlayContext): string {
     .map((key) => BEST_LABELS[key as keyof PersonalBests] ?? key)
     .join(', ')
   return `<p class="beaten">New ${names}.</p>`
+}
+
+function pausedCard(): string {
+  return `
+    <section class="card">
+      <h1>Paused</h1>
+      <p class="lede">Nothing is falling and the clock is stopped.</p>
+      <p class="prompt">Press <kbd>Esc</kbd> or <kbd>Enter</kbd> to carry on</p>
+      <p class="note">Your target was released, which costs nothing.</p>
+    </section>
+  `
 }
 
 function percent(value: number | undefined): string {

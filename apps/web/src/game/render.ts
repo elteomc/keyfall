@@ -6,7 +6,7 @@ import {
   BASELINE_Y,
   PLAYER_X,
   PLAYER_Y,
-  REVEAL_Y,
+  FADE_ABOVE,
   type Enemy,
   type RunSession,
 } from './session'
@@ -32,8 +32,8 @@ const COLORS = {
 
 const FONT = '600 22px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 
-/** How far above the arena the fade-in begins, in arena units. */
-const FADE_START = 30
+/** Where a word reaches full opacity. Cosmetic only: it is targetable throughout. */
+const FADE_DONE_Y = 18
 
 const TIER_FLASH_MS = 1000
 
@@ -113,6 +113,8 @@ export function render(
   effects.draw(ctx)
   drawGlow(ctx, session, nowMs)
   drawTierFlash(ctx, session, nowMs)
+  drawStageFlash(ctx, session, nowMs)
+  drawProgress(ctx, session)
   drawHud(ctx, session)
 
   if (nowMs - session.lastErrorAtMs < 140) {
@@ -156,8 +158,8 @@ function drawGlow(ctx: CanvasRenderingContext2D, session: RunSession, nowMs: num
 
 /** Opacity ramp that ends exactly where an enemy becomes targetable. */
 function revealAlpha(enemy: Enemy): number {
-  const span = REVEAL_Y + FADE_START
-  const progress = Math.min(1, Math.max(0, (enemy.y + FADE_START) / span))
+  const span = FADE_DONE_Y + FADE_ABOVE
+  const progress = Math.min(1, Math.max(0, (enemy.y + FADE_ABOVE) / span))
   return 0.15 + 0.85 * progress
 }
 
@@ -332,6 +334,54 @@ function drawTierFlash(
   // Rises slightly as it fades, so it reads as a release rather than a label.
   ctx.fillText(tier.toUpperCase(), ARENA_WIDTH / 2, ARENA_HEIGHT - 58 - (1 - fade) * 10)
   ctx.globalAlpha = 1
+}
+
+const STAGE_FLASH_MS = 2200
+
+/**
+ * Names the stage the run has just entered.
+ *
+ * Playtesting reported the run feeling identical from start to finish. The arc
+ * was there, it was simply never mentioned. It is announced rather than shown
+ * permanently, because section 7 of the product spec asks that the player's
+ * eyes stay on the falling words.
+ */
+function drawStageFlash(
+  ctx: CanvasRenderingContext2D,
+  session: RunSession,
+  nowMs: number,
+): void {
+  const label = session.announcedStage
+  if (!label) return
+
+  const age = nowMs - session.stageChangedAtMs
+  if (age < 0 || age > STAGE_FLASH_MS) return
+
+  // Holds at full strength, then leaves. A stage lasts minutes, so its name
+  // should not be gone in the time a combo tier's is.
+  const fade = Math.min(1, (STAGE_FLASH_MS - age) / 700)
+  ctx.globalAlpha = fade * 0.85
+  ctx.fillStyle = COLORS.hudStrong
+  ctx.font = '600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText(label.toUpperCase(), ARENA_WIDTH / 2, 44)
+  ctx.globalAlpha = 1
+}
+
+/**
+ * A hairline showing how far through the run the player is.
+ *
+ * The thinnest thing that answers "how much of this is left", which was
+ * unanswerable while the arc ran on a clock nobody could see.
+ */
+function drawProgress(ctx: CanvasRenderingContext2D, session: RunSession): void {
+  const width = ARENA_WIDTH * session.progress()
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.06)'
+  ctx.fillRect(0, 0, ARENA_WIDTH, 2)
+  ctx.fillStyle = `rgba(${TIER_RGB[session.comboTier()]}, 0.55)`
+  ctx.fillRect(0, 0, width, 2)
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, session: RunSession): void {

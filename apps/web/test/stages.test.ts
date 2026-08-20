@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import { RunSession } from '../src/game/session'
-import { FINALE_AT_MS, finaleWaveSize, intervalScaleAt, stageAt } from '../src/game/stages'
+import {
+  FINALE_KILLS,
+  HARD_CAP_MS,
+  finaleWaveSize,
+  intervalScaleAt,
+  progressOf,
+  stageAt,
+} from '../src/game/stages'
 
 /**
  * The run's arc, which is the one thing in the game still driven by the clock.
@@ -49,36 +56,52 @@ function atFinale(seed = 7): RunSession {
   const session = new RunSession()
   session.start(0, seed)
   session.enemies = []
-  session.elapsedMs = FINALE_AT_MS
+  session.kills = FINALE_KILLS
   return session
 }
 
+/** A run that has destroyed `kills` targets without hitting the time cap. */
+function at(kills: number, elapsedMs = 0) {
+  return { kills, elapsedMs }
+}
+
 describe('stage table', () => {
-  test('follows the arc in section 9 of the game design', () => {
-    expect(stageAt(0)).toBe('calibration')
-    expect(stageAt(89_000)).toBe('calibration')
-    expect(stageAt(90_000)).toBe('expansion')
-    expect(stageAt(209_000)).toBe('expansion')
-    expect(stageAt(210_000)).toBe('pressure')
-    expect(stageAt(329_000)).toBe('pressure')
-    expect(stageAt(330_000)).toBe('lull')
-    expect(stageAt(389_000)).toBe('lull')
-    expect(stageAt(390_000)).toBe('finale')
-    expect(stageAt(10_000_000)).toBe('finale')
+  test('the arc advances on targets destroyed, not on the clock', () => {
+    expect(stageAt(at(0))).toBe('calibration')
+    expect(stageAt(at(FINALE_KILLS * 0.1))).toBe('calibration')
+    expect(stageAt(at(FINALE_KILLS * 0.2))).toBe('expansion')
+    expect(stageAt(at(FINALE_KILLS * 0.5))).toBe('pressure')
+    expect(stageAt(at(FINALE_KILLS * 0.9))).toBe('lull')
+    expect(stageAt(at(FINALE_KILLS))).toBe('finale')
+    expect(stageAt(at(FINALE_KILLS * 5))).toBe('finale')
+  })
+
+  test('a long run still ends, however badly it is going', () => {
+    // Nobody has destroyed anything, but the run cannot go on forever.
+    expect(stageAt(at(0, HARD_CAP_MS * 0.5))).not.toBe('finale')
+    expect(stageAt(at(0, HARD_CAP_MS))).toBe('finale')
+    expect(progressOf(at(0, HARD_CAP_MS * 2))).toBe(1)
+  })
+
+  test('a fast player reaches the finale on fewer minutes, not fewer kills', () => {
+    const fast = at(FINALE_KILLS, 4 * 60_000)
+    const slow = at(FINALE_KILLS, 9 * 60_000)
+    expect(stageAt(fast)).toBe('finale')
+    expect(stageAt(slow)).toBe('finale')
   })
 
   test('only the lull thins the spawn rate', () => {
-    expect(intervalScaleAt(0)).toBe(1)
-    expect(intervalScaleAt(210_000)).toBe(1)
-    expect(intervalScaleAt(340_000)).toBeGreaterThan(1)
-    expect(intervalScaleAt(FINALE_AT_MS)).toBe(1)
+    expect(intervalScaleAt(at(0))).toBe(1)
+    expect(intervalScaleAt(at(FINALE_KILLS * 0.5))).toBe(1)
+    expect(intervalScaleAt(at(FINALE_KILLS * 0.9))).toBeGreaterThan(1)
+    expect(intervalScaleAt(at(FINALE_KILLS))).toBe(1)
   })
 
   test('the closing wave is proportional to the run the player had', () => {
     expect(finaleWaveSize(0)).toBeLessThan(finaleWaveSize(1))
     // Even a coasting player gets a real wave, and a peaking one gets no wall.
-    expect(finaleWaveSize(0)).toBeGreaterThanOrEqual(4)
-    expect(finaleWaveSize(1)).toBeLessThanOrEqual(8)
+    expect(finaleWaveSize(0)).toBeGreaterThanOrEqual(5)
+    expect(finaleWaveSize(1)).toBeLessThanOrEqual(10)
     expect(finaleWaveSize(-5)).toBe(finaleWaveSize(0))
     expect(finaleWaveSize(99)).toBe(finaleWaveSize(1))
   })
@@ -90,7 +113,7 @@ describe('the run arc', () => {
 
     const clock = frames(session, 100, 0)
     const wave = session.enemies.length
-    expect(wave).toBeGreaterThanOrEqual(4)
+    expect(wave).toBeGreaterThanOrEqual(5)
 
     // Pin the wave in place so the arena neither drains nor breaches, then let
     // far more than a spawn interval go by.
@@ -120,7 +143,7 @@ describe('the run arc', () => {
     const session = new RunSession()
     session.start(0, 7)
     session.enemies = []
-    session.elapsedMs = FINALE_AT_MS - 60_000
+    session.kills = Math.floor(FINALE_KILLS * 0.5)
 
     frames(session, 32, 0)
     expect(session.phase).toBe('playing')

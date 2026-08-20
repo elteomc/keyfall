@@ -13,6 +13,7 @@ import {
   deriveObservations,
   interKeyIntervals,
   mean,
+  errorSeverity,
   resolveLockedKey,
   resolveUnlockedKey,
   rhythmScore,
@@ -23,7 +24,14 @@ import { type Band, pickWord } from './corpus'
 import { Director } from './director'
 import { type Rng, createRng } from './rng'
 import { wordScore } from './scoring'
-import { type RunStage, finaleWaveSize, intervalScaleAt, stageAt } from './stages'
+import {
+  type RunStage,
+  STAGE_LABEL,
+  finaleWaveSize,
+  intervalScaleAt,
+  progressOf,
+  stageAt,
+} from './stages'
 
 /** The arena is a fixed logical space. The renderer scales it to the window. */
 export const ARENA_WIDTH = 1000
@@ -31,17 +39,21 @@ export const ARENA_HEIGHT = 700
 export const BASELINE_Y = ARENA_HEIGHT - 74
 
 /**
- * Enemies spawn above the arena and are not targetable until they have fallen
- * past this line. Locking a word the player cannot read yet feels like a
- * misfire, so prefix resolution ignores anything above it.
+ * How far above the arena a word begins fading in.
+ *
+ * Purely cosmetic now. It used to gate targeting as well, and that combination
+ * was a real bug: a word was drawn and legible for a stretch before the game
+ * would accept keys for it, so typing the word you were looking at silently
+ * locked a different one and charged every following key as an error. If it is
+ * in the arena, it can be typed. See D19.
  */
-export const REVEAL_Y = 18
+export const FADE_ABOVE = 30
 
 /** Where the player sits. Beams leave from here and misses land here. */
 export const PLAYER_X = ARENA_WIDTH / 2
 export const PLAYER_Y = ARENA_HEIGHT - 48
 
-export type Phase = 'title' | 'playing' | 'over'
+export type Phase = 'title' | 'playing' | 'paused' | 'over'
 export type EnemyKind = 'drone' | 'swarm' | 'tank' | 'sprinter' | 'shield'
 
 /**
@@ -52,7 +64,7 @@ export type EnemyKind = 'drone' | 'swarm' | 'tank' | 'sprinter' | 'shield'
  * drained once per frame rather than pushed through a callback, which keeps
  * audio and effects out of the keystroke path entirely.
  */
-export type FeedbackKind = 'hit' | 'miss' | 'kill' | 'breach' | 'promote'
+export type FeedbackKind = 'hit' | 'miss' | 'kill' | 'breach' | 'promote' | 'shield'
 
 export interface Feedback {
   kind: FeedbackKind
@@ -131,10 +143,11 @@ interface Archetype {
  * the spread between them small.
  */
 const ARCHETYPES: Record<EnemyKind, Archetype> = {
-  drone: { band: 'medium', speed: 34, errorPolicy: 'keep', burst: 1 },
-  swarm: { band: 'short', speed: 52, errorPolicy: 'keep', burst: 3 },
-  tank: { band: 'long', speed: 20, errorPolicy: 'keep', burst: 1 },
-  sprinter: { band: 'short', speed: 96, errorPolicy: 'keep', burst: 1 },
+  drone: { band: 'medium', speed: 34, errorPolicy: 'advance', burst: 1 },
+  swarm: { band: 'short', speed: 52, errorPolicy: 'advance', burst: 3 },
+  tank: { band: 'long', speed: 20, errorPolicy: 'advance', burst: 1 },
+  sprinter: { band: 'short', speed: 96, errorPolicy: 'advance', burst: 1 },
+  // The one archetype where a mistake still costs time rather than only score.
   shield: { band: 'medium', speed: 26, errorPolicy: 'reset', burst: 1 },
 }
 
@@ -142,6 +155,20 @@ const STARTING_LIVES = 3
 
 /** Silence longer than this, with something to type, counts as idling. */
 const IDLE_GRACE_MS = 900
+
+/**
+ * How long after losing a target a stray key is treated as already in flight.
+ *
+ * When the word you were typing dies or breaches mid-word, the keys you had
+ * committed arrive with nothing to match. Charging each of them was a second
+ * source of phantom errors on words the player typed correctly.
+ */
+const IN_FLIGHT_MS = 260
+
+/** Combo tier at which a streak starts absorbing a breach. */
+const SHIELDING_TIER: ComboTier = 'hot'
+/** Combo tier at which the run starts offering richer material. */
+const RICH_TIER: ComboTier = 'peak'
 const TIER_ORDER: readonly ComboTier[] = ['flat', 'warm', 'hot', 'peak']
 
 /**
@@ -186,9 +213,19 @@ export class RunSession {
   /** Set when the combo climbs a tier, so the renderer can name it briefly. */
   tierPromotedAtMs = -Infinity
   promotedTier: ComboTier | null = null
+  /** Set when the run enters a new stage, so the renderer can name it briefly. */
+  stageChangedAtMs = -Infinity
+  announcedStage: string | null = null
+  /** True while a hot streak is holding a breach in reserve. */
+  shielded = false
 
   private lastInputAtMs = 0
   private lastTier: ComboTier = 'flat'
+  private lastStage: RunStage = 'calibration'
+  /** When the player last lost the word they were typing. */
+  private targetLostAtMs = -Infinity
+  /** Time spent inside words, as opposed to waiting for one to arrive. */
+  private typingMs = 0
   private feedback: Feedback[] = []
   private rng: Rng = createRng(1)
   private recorder: EventRecorder = createRecorder('idle')
@@ -244,6 +281,12 @@ export class RunSession {
     this.promotedTier = null
     this.lastInputAtMs = nowMs
     this.lastTier = 'flat'
+    this.lastStage = 'calibration'
+    this.stageChangedAtMs = -Infinity
+    this.announcedStage = null
+    this.shielded = false
+    this.targetLostAtMs = -Infinity
+    this.typingMs = 0
     this.feedback = []
 
     this.nextEnemyId = 1
@@ -288,13 +331,24 @@ export class RunSession {
     if (breached.length > 0) {
       this.enemies = this.enemies.filter((e) => e.y < BASELINE_Y)
       for (const enemy of breached) {
-        this.lives -= 1
-        livesLost += 1
-        // A breach is the plainest break in flow the game has, so it costs
-        // combo even though nothing was mistyped.
-        this.comboTracker.registerError()
-        this.emit('breach', enemy.x, BASELINE_Y, 0)
-        if (enemy.id === this.lockedId) this.cancelLock(nowMs)
+        // A streak you have held into the hot tier absorbs one breach. It is
+        // earned survivability rather than a power that plays for you, which is
+        // the line D20 draws around what a combo may do.
+        if (this.shielded) {
+          this.shielded = false
+          this.emit('shield', enemy.x, BASELINE_Y, 0)
+        } else {
+          this.lives -= 1
+          livesLost += 1
+          // A breach is the plainest break in flow the game has, so it costs
+          // combo even though nothing was mistyped.
+          this.comboTracker.registerError()
+          this.emit('breach', enemy.x, BASELINE_Y, 0)
+        }
+        if (enemy.id === this.lockedId) {
+          this.targetLostAtMs = nowMs
+          this.cancelLock(nowMs)
+        }
       }
       this.lastErrorAtMs = nowMs
       if (this.lives <= 0) {
@@ -317,23 +371,48 @@ export class RunSession {
 
     // Dropped before spawning, so a dead prefix cannot silently attach itself
     // to a word that appears in the same tick.
+    this.dropStaleLock()
     this.dropStalePrefix()
 
     // Combo bleeds only when there is something readable to type and the
     // player is not typing it. The lull before anything has fallen into the
     // arena is the game's pacing, not the player standing still.
-    if (this.targets().length > 0 && nowMs - this.lastInputAtMs > IDLE_GRACE_MS) {
+    // Gated on words that have actually entered the arena. Every enemy is
+    // targetable now, including one that appeared this frame at the top edge,
+    // and charging idle for a word the player has not had a chance to read
+    // would punish them for the game's pacing. See D5.
+    const engaged = this.enemies.some((e) => e.y >= 0)
+    if (engaged && nowMs - this.lastInputAtMs > IDLE_GRACE_MS) {
       this.comboTracker.decay(dtMs)
     }
 
     if (this.advanceArc(dtMs, plan.intervalMs)) return
 
     this.noteTierChange(nowMs)
+    this.noteStageChange(nowMs)
   }
 
   /** Which part of the run's arc the player is in. */
   stage(): RunStage {
-    return stageAt(this.elapsedMs)
+    return stageAt(this.progressInput())
+  }
+
+  /** How far through the arc the run is, in [0, 1]. For the renderer. */
+  progress(): number {
+    return progressOf(this.progressInput())
+  }
+
+  private progressInput(): { kills: number; elapsedMs: number } {
+    return { kills: this.kills, elapsedMs: this.elapsedMs }
+  }
+
+  /** Records a stage change so the renderer can name it briefly. */
+  private noteStageChange(nowMs: number): void {
+    const stage = this.stage()
+    if (stage === this.lastStage) return
+    this.lastStage = stage
+    this.announcedStage = STAGE_LABEL[stage]
+    this.stageChangedAtMs = nowMs
   }
 
   /**
@@ -350,7 +429,7 @@ export class RunSession {
         // The stage stretches the director's interval rather than replacing it,
         // so a breath is still filled with whatever the player has earned.
         this.spawnTimerMs =
-          intervalMs * intervalScaleAt(this.elapsedMs) * this.rng.range(0.8, 1.2)
+          intervalMs * intervalScaleAt(this.progressInput()) * this.rng.range(0.8, 1.2)
       }
       return false
     }
@@ -392,7 +471,12 @@ export class RunSession {
       this.promotedTier = tier
       this.tierPromotedAtMs = nowMs
       this.emit('promote', PLAYER_X, PLAYER_Y, 1)
+      // Reaching the shielding tier arms the shield. Falling below it and
+      // climbing back arms it again, so it is something held rather than a
+      // badge collected once.
+      if (TIER_ORDER.indexOf(tier) >= TIER_ORDER.indexOf(SHIELDING_TIER)) this.shielded = true
     }
+    if (TIER_ORDER.indexOf(tier) < TIER_ORDER.indexOf(SHIELDING_TIER)) this.shielded = false
     this.lastTier = tier
   }
 
@@ -413,6 +497,27 @@ export class RunSession {
     const events = this.feedback
     this.feedback = []
     return events
+  }
+
+  /**
+   * Pause or resume.
+   *
+   * The world stops entirely, including the clock, so a pause cannot be used to
+   * study the arena for free and cannot cost the player a life either. The lock
+   * is released on the way in, which keeps Escape's promise from D6 that
+   * retreating from a word is always free.
+   */
+  togglePause(nowMs: number): void {
+    if (this.phase === 'playing') {
+      this.cancelLock(nowMs)
+      this.phase = 'paused'
+      return
+    }
+    if (this.phase === 'paused') {
+      this.phase = 'playing'
+      this.lastInputAtMs = nowMs
+      this.targetLostAtMs = nowMs
+    }
   }
 
   /** Handle one printable character. */
@@ -452,12 +557,6 @@ export class RunSession {
       return
     }
 
-    // Aiming at a word that has not dropped into the arena yet is a timing
-    // guess, not a mistake, so the keystroke is ignored instead of charged as
-    // an error. Without this, hiding unrevealed enemies would just trade one
-    // phantom error for another.
-    if (this.matchesOnlyUnrevealed(this.prefix + char)) return
-
     this.keysTotal += 1
     const result = resolveUnlockedKey(
       this.targets().map((e) => ({ id: e.id, sequence: e.word })),
@@ -468,6 +567,15 @@ export class RunSession {
     if (result.kind === 'miss') {
       this.prefix = ''
       this.prefixTimesMs = []
+
+      // Keys already committed when the target died or breached arrive with
+      // nothing to match. They were the player's intent a moment ago, so they
+      // are dropped rather than charged.
+      if (nowMs - this.targetLostAtMs < IN_FLIGHT_MS) {
+        this.keysTotal -= 1
+        return
+      }
+
       this.lastErrorAtMs = nowMs
       this.comboTracker.registerError()
       this.emit('miss', PLAYER_X, PLAYER_Y, 0)
@@ -566,9 +674,16 @@ export class RunSession {
     return this.enemies.find((e) => e.id === this.lockedId) ?? null
   }
 
-  /** Enemies the player can actually read, and therefore target. */
+  /**
+   * Enemies the player may target, which is all of them.
+   *
+   * Anything in the arena is a candidate, including a word still fading in.
+   * Excluding them was worse than including them: a word the player could read
+   * was not a candidate, so a prefix that should have been ambiguous resolved
+   * to the wrong target and locked it.
+   */
   targets(): Enemy[] {
-    return this.enemies.filter((e) => e.y >= REVEAL_Y)
+    return this.enemies
   }
 
   /**
@@ -578,17 +693,28 @@ export class RunSession {
    * next keystroke would otherwise be charged as a miss against words that no
    * longer exist.
    */
+  /**
+   * Releases a lock whose target is no longer in the arena.
+   *
+   * However the word went, the keys the player had already committed to it are
+   * in flight, so this starts the grace that stops them being charged.
+   */
+  private dropStaleLock(): void {
+    if (this.lockedId === null) return
+    if (this.enemies.some((e) => e.id === this.lockedId)) return
+
+    this.lockedId = null
+    this.targetLostAtMs = this.nowMs
+    this.beginWordWindow()
+  }
+
   private dropStalePrefix(): void {
     if (this.prefix === '' || this.lockedId !== null) return
     if (this.targets().some((e) => e.word.startsWith(this.prefix))) return
 
     this.prefix = ''
     this.prefixTimesMs = []
-  }
-
-  private matchesOnlyUnrevealed(prefix: string): boolean {
-    if (this.enemies.some((e) => e.y >= REVEAL_Y && e.word.startsWith(prefix))) return false
-    return this.enemies.some((e) => e.y < REVEAL_Y && e.word.startsWith(prefix))
+    this.targetLostAtMs = this.nowMs
   }
 
   /** Coarse pressure estimate in [0, 1], recorded on every keystroke. */
@@ -608,7 +734,21 @@ export class RunSession {
     return clamp01(nearest)
   }
 
+  /**
+   * The player's typing speed.
+   *
+   * Measured over time spent inside words, not over the whole run. Dividing by
+   * elapsed time made this a measurement of the spawn rate: a player who clears
+   * every word instantly then waits, and the waiting dominated. Typists at 48
+   * and at 343 wpm were both reported as roughly 42, because that was how fast
+   * the game was feeding them rather than how fast they were typing.
+   */
   liveWpm(): number {
+    return wordsPerMinute(this.completedChars, this.typingMs)
+  }
+
+  /** Words destroyed per minute of run, which is the game's pace, not the player's. */
+  throughputWpm(): number {
     return wordsPerMinute(this.completedChars, this.elapsedMs)
   }
 
@@ -679,7 +819,9 @@ export class RunSession {
 
     if (result.kind === 'wrong') {
       this.lastErrorAtMs = nowMs
-      this.comboTracker.registerError()
+      // A slip near the start spoils the whole word, one near the end spoils
+      // almost nothing, so the two are not charged the same.
+      this.comboTracker.registerError(errorSeverity(enemy.word.length, enemy.typed))
       this.emit('miss', enemy.x, enemy.y, result.typed / enemy.word.length)
       if (previousKey !== null && result.expected !== '') {
         this.transitions.observe(previousKey, result.expected, 0, false)
@@ -703,6 +845,14 @@ export class RunSession {
       // A shield that swallowed the whole word starts the measurement over
       // with it, so the abandoned attempt is not charged to the retry.
       if (lost > 0) this.beginWordWindow()
+
+      // The cursor moved past the mistake, so a slip on the final character
+      // still finishes the word rather than stranding it one key from death.
+      if (result.complete) {
+        this.wordKeys.push(char)
+        this.wordTimesMs.push(nowMs)
+        this.completeWord(enemy, nowMs)
+      }
       return
     }
 
@@ -757,8 +907,14 @@ export class RunSession {
     if (rhythm !== null) this.rhythmSamples.push(rhythm)
 
     if (firstKeyMs !== undefined && lastKeyMs !== undefined && lastKeyMs > firstKeyMs) {
-      const burst = wordsPerMinute(enemy.word.length - 1, lastKeyMs - firstKeyMs)
+      const spanMs = lastKeyMs - firstKeyMs
+      const burst = wordsPerMinute(enemy.word.length - 1, spanMs)
       this.peakBurstWpm = Math.max(this.peakBurstWpm, burst)
+
+      // Scaled up by one interval, because n characters span only n - 1 gaps.
+      // Without it a short word reads as faster than a long one typed at the
+      // same rate.
+      this.typingMs += (spanMs * enemy.word.length) / (enemy.word.length - 1)
     }
 
     this.comboTracker.completeWord({
@@ -811,11 +967,26 @@ export class RunSession {
     for (let i = 0; i < count; i++) this.spawnOne(kind, i)
   }
 
+  /**
+   * The band a spawn draws from.
+   *
+   * At the peak tier the run offers richer material: a word one band longer,
+   * worth more. That is the deliberate shape of the reward. A combo that
+   * cleared the screen for you would take away the thing the player came to do,
+   * so flow buys better things to type rather than less typing. See D20.
+   */
+  private bandFor(archetype: Archetype): Band {
+    if (this.comboTracker.tier() !== RICH_TIER) return archetype.band
+    if (archetype.band === 'short') return 'medium'
+    if (archetype.band === 'medium') return 'long'
+    return 'long'
+  }
+
   /** `row` staggers a cluster vertically so its words stay separately readable. */
   private spawnOne(kind: EnemyKind, row: number): void {
     const archetype = ARCHETYPES[kind]
     const active = new Set(this.enemies.map((e) => e.word))
-    const word = pickWord(archetype.band, this.rng, active)
+    const word = pickWord(this.bandFor(archetype), this.rng, active)
 
     const y = -20 - row * 46
 
@@ -907,7 +1078,7 @@ export class RunSession {
       score: this.score,
       timeMs: this.elapsedMs,
       kills: this.kills,
-      wpm: wordsPerMinute(this.completedChars, this.elapsedMs),
+      wpm: this.liveWpm(),
       accuracy: accuracy(this.keysCorrect, this.keysTotal),
       peakBurstWpm: this.peakBurstWpm,
       rhythm: this.rhythmSamples.length > 0 ? mean(this.rhythmSamples) : null,

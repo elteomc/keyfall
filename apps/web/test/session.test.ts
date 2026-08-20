@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { ARENA_WIDTH, BASELINE_Y, REVEAL_Y, type Enemy, RunSession } from '../src/game/session'
+import { ARENA_WIDTH, BASELINE_Y, type Enemy, RunSession } from '../src/game/session'
 
 /**
  * Synthetic typists driving the session on a fake clock.
@@ -127,54 +127,103 @@ describe('RunSession', () => {
     expect(run.session.lockedId).toBeNull()
   })
 
-  test('an enemy above the reveal line cannot be targeted', () => {
+  test('a word still fading in can already be typed', () => {
     const run = driver()
     run.advance(4000)
 
     const enemy = run.session.enemies[0]!
-    enemy.y = REVEAL_Y - 1
+    enemy.y = -10
 
-    expect(run.session.targets().some((e) => e.id === enemy.id)).toBe(false)
-
-    run.type(enemy.word[0]!)
-    expect(run.session.lockedId).toBeNull()
-    expect(enemy.typed).toBe(0)
+    // If it is in the arena it is a candidate. Anything else creates a window
+    // where the player can read a word the game will not accept.
+    expect(run.session.targets().some((e) => e.id === enemy.id)).toBe(true)
   })
 
-  test('a key aimed at an unrevealed word is ignored, not counted as an error', () => {
+  test('the word you are looking at is not stolen by another', () => {
     const run = driver()
     run.advance(4000)
 
-    // Only one enemy, held above the reveal line.
-    const enemy = run.session.enemies[0]!
-    run.session.enemies = [enemy]
-    enemy.y = REVEAL_Y - 1
+    // The reported bug: "packet" was fading in and "pattern" was not, so p-a
+    // locked pattern and every following key was charged against it. The player
+    // typed packet perfectly and heard three wrong-key sounds.
+    run.session.enemies = [fakeEnemy('a', 'pattern', 300), { ...fakeEnemy('b', 'packet', -10) }]
 
-    run.type(enemy.word[0]!)
+    run.type('packet')
+
+    expect(run.session.kills).toBe(1)
+    expect(run.session.enemies.map((e) => e.word)).toEqual(['pattern'])
     run.advance(120000)
-
     expect(run.session.currentSummary()!.accuracy).toBe(1)
   })
 
-  test('a wrong key keeps the lock and only costs accuracy', () => {
+  test('keys already in flight when the target dies are not charged', () => {
     const run = driver()
     run.advance(4000)
 
-    const target = run.session.enemies[0]!
-    run.type(target.word.slice(0, 2))
-    const lockedId = run.session.lockedId
-    expect(lockedId).not.toBeNull()
+    run.session.enemies = [fakeEnemy('a', 'packet', 300), fakeEnemy('b', 'signal', 300)]
+    run.type('pa')
 
-    const locked = run.session.lockedEnemy()!
-    const typedBefore = locked.typed
-    const expected = locked.word[locked.typed]
-    run.type(expected === 'q' ? 'z' : 'q')
+    // The word breaches out from under the player mid-prefix.
+    run.session.enemies = run.session.enemies.filter((e) => e.word !== 'packet')
+    run.advance(16)
 
-    expect(run.session.lockedId).toBe(lockedId)
-    expect(run.session.lockedEnemy()!.typed).toBe(typedBefore)
+    const before = run.session.eventCount()
+    run.type('cket', 40)
 
+    // Dropped rather than charged: they were the player's intent a moment ago.
+    expect(run.session.eventCount()).toBe(before)
     run.advance(120000)
-    expect(run.session.currentSummary()!.accuracy).toBeLessThan(1)
+    expect(run.session.currentSummary()!.accuracy).toBe(1)
+  })
+
+  test('a wrong key advances past the mistake instead of blocking', () => {
+    const run = driver()
+    run.advance(4000)
+    run.session.enemies = [fakeEnemy('a', 'packet', 300)]
+
+    // One slip, then the player carries on at speed as a real typist does.
+    run.type('pac', 40)
+    run.type('j', 40)
+    run.type('et', 40)
+
+    // The word dies. A slip costs accuracy and combo, not the target.
+    expect(run.session.kills).toBe(1)
+    run.advance(120000)
+
+    const summary = run.session.currentSummary()!
+    expect(summary.accuracy).toBeLessThan(1)
+    // Exactly one wrong key charged, not one per key that followed it.
+    expect(summary.accuracy).toBeCloseTo(5 / 6, 2)
+  })
+
+  test('a shield still makes a mistake cost time', () => {
+    const run = driver()
+    run.advance(4000)
+    run.session.enemies = [{ ...fakeEnemy('a', 'packet', 300), kind: 'shield' }]
+
+    run.type('pac', 40)
+    run.type('j', 40)
+
+    // The one archetype where a slip sends you back to the start.
+    expect(run.session.lockedEnemy()!.typed).toBe(0)
+    expect(run.session.kills).toBe(0)
+  })
+
+  test('a slip early costs more combo than a slip late', () => {
+    function comboAfterSlipAt(index: number): number {
+      const run = driver()
+      run.advance(4000)
+      buildCombo(run, 14)
+      const before = run.session.combo()
+
+      run.session.enemies = [fakeEnemy('z', 'packet', 300)]
+      run.type('packet'.slice(0, index), 40)
+      run.type('q', 40)
+      return before - run.session.combo()
+    }
+
+    // Spoiling a whole word should cost more than fumbling its last character.
+    expect(comboAfterSlipAt(0)).toBeGreaterThan(comboAfterSlipAt(5))
   })
 
   test('escape releases the target and resets its progress', () => {
@@ -385,18 +434,6 @@ describe('RunSession', () => {
     expect(run.session.kills).toBe(1)
   })
 
-  test('a wrong key on any other archetype keeps the progress', () => {
-    const run = driver()
-    run.advance(4000)
-
-    const drone: Enemy = { ...fakeEnemy('d', 'kernel', 200), kind: 'drone' }
-    run.session.enemies = [drone]
-
-    run.type('kern')
-    run.type('x')
-    expect(drone.typed).toBe(4)
-  })
-
   test('a sprinter carries a short word and outruns a tank', () => {
     const run = driver(3)
     run.advance(4000)
@@ -536,10 +573,10 @@ describe('RunSession', () => {
     run.session.enemies = [fakeEnemy('a', 'vector', 200)]
     run.type('ve', 90)
     run.type('q', 90)
-    run.type('ctor', 90)
+    run.type('tor', 90)
 
     const kinds = run.session.drainFeedback().map((f) => f.kind)
-    expect(kinds.filter((k) => k === 'hit')).toHaveLength(6)
+    expect(kinds.filter((k) => k === 'hit')).toHaveLength(5)
     expect(kinds).toContain('miss')
     expect(kinds).toContain('kill')
 

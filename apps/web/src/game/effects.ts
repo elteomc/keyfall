@@ -111,6 +111,11 @@ export class Effects {
       return
     }
 
+    if (event.kind === 'shield') {
+      this.ring(event.x, event.y, 30, 520, 4, TIER_RGB[event.tier])
+      return
+    }
+
     if (event.kind === 'breach') {
       this.sparks(event.x, event.y, this.scaled(22), 420, ERROR_RGB, 2.6)
       this.ring(event.x, event.y, 120, 460, 3, ERROR_RGB)

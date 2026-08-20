@@ -118,6 +118,14 @@ export class GameAudio {
       return
     }
 
+    // A shielded breach should read as a save, not as a loss. Rising rather
+    // than falling, and none of the noise a real breach carries.
+    if (event.kind === 'shield') {
+      this.tone({ type: 'triangle', hz: 220, durationS: 0.28, gain: 0.34, endHz: 660 })
+      this.tone({ type: 'sine', hz: 440, durationS: 0.22, gain: 0.18, endHz: 880 })
+      return
+    }
+
     if (event.kind === 'breach') {
       this.noiseBurst(0.5, 0.35, 500)
       this.tone({ type: 'sine', hz: 150, durationS: 0.7, gain: 0.5, endHz: 48 })
