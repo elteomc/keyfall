@@ -52,8 +52,8 @@ vitest fork pool crashes in a sandboxed shell, and `npx vitest run
 
 The repository publishes the game, not the process behind it. Source, tests,
 package files, `README.md` and this file are tracked. The planning pack in
-`docs/`, the long-form notes in `deep.md`, `AGENTS.md`, and the loop's per-run
-artifacts stay on the machine they were written on.
+`docs/`, the long-form notes in `deep.md`, and the loop's per-run artifacts stay
+on the machine they were written on.
 
 This file is the one status document that ships, and the README points at it.
 
