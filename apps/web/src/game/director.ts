@@ -195,7 +195,7 @@ export class Director {
    * the next target, and real throughput is well below it. Half the baseline is
    * a large share of what a player can actually sustain.
    *
-   * This is a skill signal, which D10 deliberately excluded and D14 puts back.
+   * This is a skill signal, which D10 deliberately excluded and D16 puts back.
    * It is not rubber-banding: nothing here reacts to *how well* the player is
    * doing, only to how much of their demonstrated speed the game is spending.
    * The deadband, the lag and the capped rate all still stand between this
