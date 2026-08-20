@@ -4,62 +4,87 @@
 
 Keyfall is a browser typing game in a two-layer npm workspace.
 `packages/typing-core` holds renderer-free typing intelligence (targeting,
-metrics, digram statistics, combo, observations), and `apps/web` holds the
-canvas game layer. The dependency runs one way only, and nothing in
-`typing-core` may touch the DOM or the renderer.
+metrics, digram statistics, combo, observations, the profile fold), and
+`apps/web` holds the canvas game layer. The dependency runs one way only, and
+nothing in `typing-core` may touch the DOM or the renderer.
 
-Milestone 0 is closed. All seven milestone 1 items are built: five archetypes,
-score, combo, a pressure curve, effects and audio, 5 to 10 minute runs, and a
-result screen. Milestone 2 is built too: five of its six items fell out of
-milestone 1, and local persistence has now been added.
+Milestones 0, 1 and 2 are closed, exit criteria included. The game has now been
+played by a human across two sessions, and the second one was reported as fun.
+Persistence has been confirmed working in a real browser: the title screen
+carries a run count, a best score and a typical wpm across reloads.
 
-A run now has an arc rather than only a failure. It follows the eight minute
-shape in section 9 of the game design, and at 6:30 spawning stops and a closing
-wave arrives. Clearing it ends the run as `cleared`, so a strong player finishes
-a run instead of playing until they slip.
+A run has an arc that advances on targets destroyed rather than on the clock.
+Stage changes are announced and a hairline shows how far through the run the
+player is. Reaching the finale ends the run as `cleared`, so a strong player
+finishes a run instead of playing until they slip. The clock survives only as a
+ten minute cap for a stalled run.
 
-The result screen carries the six headline metrics from section 12 plus at most
-three personalized observations: the slowest digram, accuracy under a crowded
-arena, and rhythm across the two halves of the run. `typing-core` returns
-structure and the overlay picks the wording, so a tentative finding cannot be
-quietly promoted into a fact.
-
-Runs are now kept between sessions. The profile holds aggregate skill
-statistics, personal bests, corpus exposure and long-term digram timings in
-IndexedDB, with raw events for the last three runs only. It can be exported,
-imported and erased from the title screen.
+The result screen carries six headline metrics plus at most three personalized
+observations: the slowest digram, accuracy under a crowded arena, and rhythm
+across the two halves of the run. `typing-core` returns structure and the
+overlay picks the wording, so a tentative finding cannot be quietly promoted
+into a fact.
 
 ## Status
 
-Milestones 1 and 2 built, neither playtested. 138 tests pass,
-`npm run typecheck` and `npm run build` are clean. Note for anyone running the
-suite: the default vitest fork pool crashes in a sandboxed shell, and
-`npx vitest run --pool=threads` runs the same suite fine.
+**Current milestone: 3, the adaptive director. Not started.**
 
-Three exit criteria are now waiting on the same thing, a human playing the
-game: milestone 0's "it is already satisfying to type", milestone 1's "friends
-voluntarily replay", and milestone 2's "profile statistics are stable enough to
-resemble observed typing behavior". None can be closed from here.
+150 tests pass across 12 files, `npm run typecheck` and `npm run build` are
+clean. Note for anyone running the suite: the default vitest fork pool crashes
+in a sandboxed shell, and `npx vitest run --pool=threads` runs the same suite
+fine.
+
+The game has zero runtime dependencies. `apps/web` depends on
+`@keyfall/typing-core` and on nothing else, and `typing-core` depends on
+nothing at all. Vite and vitest are the only build tooling.
+
+### Milestones closed
+
+- **0, mechanics sandbox.** Exit criterion was "it is already satisfying to
+  type". Closed by playtest.
+- **1, game prototype.** Five archetypes, score, combo, a pressure curve,
+  effects and audio, runs of five to ten minutes, and a result screen. The exit
+  criterion is "friends voluntarily replay". One player replays voluntarily.
+  Nobody else has played it, so this is closed on the weaker evidence.
+- **2, typing instrumentation.** Event telemetry, digram timing, errors,
+  reaction time, rhythm and local persistence. The exit criterion is "profile
+  statistics are stable enough to resemble observed typing behavior", and the
+  profile now survives reloads and reports plausible lifetime figures.
+
+### What milestone 3 plugs into
+
+Two seams are already written and read by nothing, which is deliberate. The
+profile carries `corpusExposure` and a long-term digram table folded across
+runs, both waiting for a selector. `pickWord` in `apps/web/src/game/corpus.ts`
+currently picks uniformly at random from a length band, and its own header says
+the per-sequence metadata belongs to this milestone.
+
+The director already owns the adaptation brakes milestone 3 asks for, a
+deadband, a lag and a capped rate. Word selection should reuse them rather than
+grow a second adaptation loop with its own tuning.
+
+Its exit criterion is that two typists with different weaknesses receive
+visibly different challenge distributions. That needs a second player, so it
+cannot be closed from this machine.
 
 ## Open questions
 
-- **The game has never been played by a human.** Combo, scoring, the director
-  and the run arc are all tuned by argument and by simulation. This is now the
-  single largest source of risk in the project.
-- Is the game too forgiving since the director started reading load? Under a
-  simulated typist every speed now clears every run. That bot triages perfectly
-  and pays no acquisition cost, so it cannot model what actually defeats a
-  person. See D16.
-- The closing wave is four to eight enemies with nothing following it, which a
-  bot clears easily. Should the finale be heavier, or is it a victory lap?
-- The combo hits its ceiling of 40 after roughly fifty clean words, so a strong
-  player spends most of a run parked at the top. Raise the ceiling, or treat
-  reaching it as arriving and leave it alone?
+- Two tuning changes shipped together, so neither can be attributed yet. The
+  `hot` tier shield makes the player harder to kill, and the load signal drives
+  arrivals much closer to the player's measured speed. A report of "too easy"
+  or "too hard" currently has two possible causes. See D20 and D16. Deferred by
+  the user rather than answered.
+- The combo reaches its ceiling of 40 after roughly fifty clean words, so a
+  strong player spends most of a run parked at the top with nothing left to
+  climb. Raise the ceiling, or treat arriving as the reward?
+- Is the finale a real test or a victory lap? It is a wave of five to ten with
+  nothing behind it.
 - Run length is section 21 question 8, to be settled by play. The arc currently
-  lands at about 6 minutes 40.
-- The IndexedDB path has never executed. vitest has no `indexedDB`, so the
-  memory store carries the tested contract and every real operation is wrapped
-  to degrade rather than throw. The first playtest is its first run.
+  lands near five minutes for a fast player and six and a half for an average
+  one.
+- Simulation cannot answer whether the game is hard enough. The bot triages
+  perfectly and pays no target acquisition cost, so every simulated speed
+  clears every run. Only play settles difficulty.
 
 ## Repository layout
 
@@ -72,17 +97,26 @@ This file is the one status document that ships, and the README points at it.
 
 ## Latest change
 
-- Added local persistence, the one milestone 2 item that was not already built.
-  `packages/typing-core/src/profile.ts` holds the pure fold, and
-  `apps/web/src/game/storage.ts` holds the IndexedDB store with a memory
-  fallback. Export, import and erase are on the title screen. Recorded as D18.
-- Gave a run an ending: a stage arc in `apps/web/src/game/stages.ts`, a closing
-  wave, and a `cleared` outcome. Recorded as D15.
-- Fixed a difficulty cliff the arc exposed. Simulating full runs showed the
-  director climbing for over two minutes against a pressure reading of 0.1, then
-  the arena going from two enemies to eleven in twenty seconds. Arena occupancy
-  is a lagging indicator. The director now also reads load, which is arrival
-  rate against the player's own typing speed. Recorded as D16, which partly
-  supersedes D10.
-- Added `packages/typing-core/src/observations.ts` and put its findings on the
-  result screen, hedged by sample size. Recorded as D17.
+- Fixed the way a wrong key is handled, twice. The cursor now never advances on
+  a wrong key, so a word can only ever be finished by typing it. One slip is
+  charged once, and the keys already in flight behind it pass silently.
+  Immediately after a slip the word accepts either the character it still wants
+  or the one after it, which covers both noticing and not noticing. Recorded as
+  D21.
+- Made the combo do something other than multiply score. `hot` arms a shield
+  that absorbs one breach, and `peak` draws words from a longer band. The rule
+  behind it is that a reward gives you more of the core verb, not less of it.
+  Recorded as D20.
+- Put the run arc on progress rather than the clock, and made it visible.
+  Recorded as D22, superseding D15.
+- Fixed a targeting bug that read correctly typed words as wrong. Enemies were
+  drawn before they were targetable, so a visible word could be excluded from
+  the candidate set and a prefix would lock the wrong target. Every enemy in
+  the arena is now a candidate. Recorded as D19, superseding D3.
+- Added a stop key. `Esc` pauses, and `Q` from there stops the run and returns
+  to the title. A stopped run is not recorded. Recorded as D23.
+- Fixed effective wpm, which reported the spawn rate rather than the player.
+  It is now measured over time spent inside words rather than over elapsed run
+  time.
+- Grew the corpus from 82 words to 420, because a six minute run destroys
+  several hundred words and a small pool repeats inside a single run.
