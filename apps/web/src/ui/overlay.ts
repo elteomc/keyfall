@@ -1,6 +1,15 @@
-import type { Observation } from '@keyfall/typing-core'
+import { type Observation, type PersonalBests, type Profile, lifetimeAccuracy } from '@keyfall/typing-core'
 
 import type { RunSession, RunSummary } from '../game/session'
+
+/** Everything the overlay needs that does not live on the session. */
+export interface OverlayContext {
+  profile: Profile
+  /** False when storage is unavailable, so nothing may promise a history. */
+  durable: boolean
+  /** Personal bests this run beat, read before the run was folded in. */
+  beaten: readonly string[]
+}
 
 /**
  * Title and post-run screens.
@@ -8,7 +17,11 @@ import type { RunSession, RunSummary } from '../game/session'
  * Restart has to be effectively instant, so there is no menu here. One key
  * starts the next run.
  */
-export function renderOverlay(root: HTMLElement, session: RunSession): void {
+export function renderOverlay(
+  root: HTMLElement,
+  session: RunSession,
+  context: OverlayContext,
+): void {
   if (session.phase === 'playing') {
     root.innerHTML = ''
     root.dataset.visible = 'false'
@@ -16,10 +29,13 @@ export function renderOverlay(root: HTMLElement, session: RunSession): void {
   }
 
   root.dataset.visible = 'true'
-  root.innerHTML = session.phase === 'title' ? titleCard() : summaryCard(session.currentSummary())
+  root.innerHTML =
+    session.phase === 'title'
+      ? titleCard(context)
+      : summaryCard(session.currentSummary(), context)
 }
 
-function titleCard(): string {
+function titleCard(context: OverlayContext): string {
   return `
     <section class="card">
       <h1>Keyfall</h1>
@@ -33,9 +49,51 @@ function titleCard(): string {
         <li><kbd>Ctrl</kbd>+<kbd>M</kbd> turns the sound off and on.</li>
       </ul>
       <p class="prompt">Press <kbd>Enter</kbd> to start</p>
-      <p class="note">Keystrokes are recorded only while a run is active, and only in this browser.</p>
+      ${historyLine(context)}
+      <p class="note">
+        Keystrokes are recorded only while a run is active, and only in this browser.
+        <kbd>Ctrl</kbd>+<kbd>E</kbd> exports your profile,
+        <kbd>Ctrl</kbd>+<kbd>O</kbd> imports one,
+        <kbd>Ctrl</kbd>+<kbd>Delete</kbd> erases everything.
+      </p>
     </section>
   `
+}
+
+/**
+ * What the profile knows so far.
+ *
+ * Says nothing at all before the first run has been recorded, because an
+ * opening screen full of zeroes tells a new player only that they are new.
+ */
+function historyLine(context: OverlayContext): string {
+  const { runs, typicalWpm } = context.profile.aggregate
+  if (runs === 0) return ''
+
+  const plural = runs === 1 ? 'run' : 'runs'
+  const held = context.durable
+    ? ''
+    : ' <strong>Storage is unavailable, so this run will not be kept.</strong>'
+
+  return `<p class="history">${runs} ${plural} recorded. Best ${context.profile.bests.score}, usually around ${typicalWpm.toFixed(0)} wpm at ${(lifetimeAccuracy(context.profile) * 100).toFixed(0)}% accuracy.${held}</p>`
+}
+
+const BEST_LABELS: Record<keyof PersonalBests, string> = {
+  score: 'best score',
+  wpm: 'best wpm',
+  accuracy: 'best accuracy',
+  kills: 'most targets',
+  longestRunMs: 'longest run',
+}
+
+/** Records this run beat, named rather than merely counted. */
+function beatenLine(context: OverlayContext): string {
+  if (context.beaten.length === 0) return ''
+
+  const names = context.beaten
+    .map((key) => BEST_LABELS[key as keyof PersonalBests] ?? key)
+    .join(', ')
+  return `<p class="beaten">New ${names}.</p>`
 }
 
 function percent(value: number | undefined): string {
@@ -96,7 +154,7 @@ function observationText(o: Observation): string {
   }
 }
 
-function summaryCard(summary: RunSummary | null): string {
+function summaryCard(summary: RunSummary | null, context: OverlayContext): string {
   if (!summary) return '<section class="card"><h1>Run over</h1></section>'
 
   const seconds = summary.timeMs / 1000
@@ -130,6 +188,7 @@ function summaryCard(summary: RunSummary | null): string {
     <section class="card">
       <h1>${summary.score}</h1>
       <p class="lede">${verdict}</p>
+      ${beatenLine(context)}
       <dl class="stats">
         <div><dt>effective wpm</dt><dd>${summary.wpm.toFixed(0)}</dd></div>
         <div><dt>accuracy</dt><dd>${(summary.accuracy * 100).toFixed(1)}%</dd></div>
@@ -141,6 +200,7 @@ function summaryCard(summary: RunSummary | null): string {
       <h2>Slowest well sampled transitions</h2>
       <ul class="transitions">${slowest}</ul>
       <p class="prompt">Press <kbd>Enter</kbd> to run again</p>
+      ${historyLine(context)}
     </section>
   `
 }

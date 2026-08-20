@@ -105,6 +105,25 @@ body {
   color: var(--accent);
 }
 
+/* A beaten record is the one line on the summary that should catch the eye
+   before the player has read anything else. */
+.beaten {
+  margin: 0 0 18px;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.history {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.history strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* The observations carry the run's meaning, so they read as sentences rather
    than as another row of statistics. */
 .observations {

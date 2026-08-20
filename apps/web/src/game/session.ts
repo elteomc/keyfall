@@ -3,7 +3,9 @@ import {
   type ErrorPolicy,
   type EventRecorder,
   type Observation,
+  type RunContribution,
   type TransitionStat,
+  type TypingEvent,
   ComboTracker,
   TransitionTable,
   accuracy,
@@ -200,6 +202,8 @@ export class RunSession {
   private finaleSpawned = false
   /** Characters added to the arena since the director last looked. */
   private arrivedChars = 0
+  /** Every word that entered the arena, for the profile's corpus exposure. */
+  private exposedWords: string[] = []
 
   private prefixTimesMs: number[] = []
   private wordTimesMs: number[] = []
@@ -248,6 +252,7 @@ export class RunSession {
     this.readyAtMs = nowMs
     this.finaleSpawned = false
     this.arrivedChars = 0
+    this.exposedWords = []
 
     this.prefixTimesMs = []
     this.wordTimesMs = []
@@ -629,6 +634,43 @@ export class RunSession {
     return this.recorder.count()
   }
 
+  /** The raw keystroke stream, kept only for the most recent runs. */
+  events(): readonly TypingEvent[] {
+    return this.recorder.events()
+  }
+
+  /**
+   * Everything the stored profile needs from a finished run.
+   *
+   * `startedAtMs` is wall clock and comes from the caller, because the session
+   * runs on `performance.now()` and a monotonic clock since page load means
+   * nothing to a profile that outlives the page.
+   */
+  contribution(startedAtMs: number): RunContribution | null {
+    const summary = this.summary
+    if (summary === null) return null
+
+    return {
+      record: {
+        runId: this.recorder.runId,
+        startedAtMs,
+        durationMs: summary.timeMs,
+        outcome: summary.outcome,
+        score: summary.score,
+        kills: summary.kills,
+        wpm: summary.wpm,
+        accuracy: summary.accuracy,
+        peakBurstWpm: summary.peakBurstWpm,
+        rhythm: summary.rhythm,
+        acquisitionMs: summary.acquisitionMs,
+      },
+      totalKeys: this.keysTotal,
+      correctKeys: this.keysCorrect,
+      words: this.exposedWords,
+      transitions: this.transitions.stats(),
+    }
+  }
+
   private applyLockedKey(enemy: Enemy, char: string, nowMs: number, pressure: number): void {
     const policy = ARCHETYPES[enemy.kind].errorPolicy
     const result = resolveLockedKey(enemy.word, enemy.typed, char, policy)
@@ -790,6 +832,7 @@ export class RunSession {
     })
 
     this.arrivedChars += word.length
+    this.exposedWords.push(word)
   }
 
   /**
