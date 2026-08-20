@@ -10,8 +10,9 @@ npm install
 npm run dev
 ```
 
-Then open the printed URL and press Enter. The current build is the milestone 0
-mechanics sandbox. See [quick.md](quick.md) for what exists and what does not.
+Then open the printed URL and press Enter. The current build is a prototype:
+five enemy archetypes, prefix targeting, a combo, and a difficulty director.
+See [quick.md](quick.md) for what exists and what does not.
 
 ## Working concept
 
@@ -36,12 +37,6 @@ This planning pack intentionally does **not** make AI-generated text, coding wor
 9. **No AI dependency for v1.** The game should work fully offline or with deterministic content generation.
 10. **Architect for richer domains later**: prose, programming, LaTeX/Typst, terminal usage, Vim/editor operations.
 
-<!-- ## Recommended document order -->
-<!---->
-<!-- 1. [docs/01-product-spec.md](docs/01-product-spec.md), what we are building and what v1 includes. -->
-<!-- 2. [docs/02-game-design.md](docs/02-game-design.md), mechanics, enemies, runs, difficulty, scoring, progression. -->
-<!-- 3. [docs/03-skill-model-and-technical-plan.md](docs/03-skill-model-and-technical-plan.md), telemetry, personalization, architecture, implementation, milestones. -->
-<!---->
 ## What success looks like for the first public alpha
 
 A player should be able to open the game, play immediately, and within 10 to 15 minutes experience all of the following:
