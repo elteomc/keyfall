@@ -35,3 +35,24 @@ export type {
   ObservationOptions,
 } from './observations'
 export { deriveObservations } from './observations'
+
+export type {
+  AggregateStats,
+  PersonalBests,
+  Profile,
+  RunContribution,
+  RunRecord,
+  StoredTransition,
+} from './profile'
+export {
+  MAX_RECENT_RUNS,
+  MAX_TRACKED_WORDS,
+  PROFILE_VERSION,
+  beatenBests,
+  emptyProfile,
+  exportProfile,
+  importProfile,
+  isProfile,
+  lifetimeAccuracy,
+  recordRun,
+} from './profile'
