@@ -54,25 +54,51 @@ describe('resolveLockedKey', () => {
     expect(resolveLockedKey('run', 2, 'n')).toEqual({ kind: 'hit', typed: 3, complete: true })
   })
 
-  test('a wrong character advances past the mistake by default', () => {
-    // Holding the cursor still assumed the player stops dead and resumes from
-    // the character the game wants. A fast typist has already sent the next two
-    // keys, and each was charged as another error.
+  test('a wrong character never advances the word', () => {
     expect(resolveLockedKey('run', 1, 'x')).toEqual({
       kind: 'wrong',
       expected: 'u',
-      typed: 2,
+      typed: 1,
       complete: false,
     })
   })
 
-  test('a slip on the last character still finishes the word', () => {
-    expect(resolveLockedKey('run', 2, 'x')).toEqual({
-      kind: 'wrong',
-      expected: 'n',
-      typed: 3,
-      complete: true,
+  test('typing rubbish can never destroy a word', () => {
+    // The property an earlier version threw away by advancing on any key: six
+    // wrong letters finished a six-letter word, which made accuracy pointless.
+    let typed = 0
+    for (const key of 'xxxxxx') {
+      const result = resolveLockedKey('packet', typed, key, 'hold', true)
+      expect(result.kind).toBe('wrong')
+      expect(result.complete).toBe(false)
+      typed = result.typed
+    }
+    expect(typed).toBe(0)
+  })
+
+  test('recovery: the player retypes the character they fumbled', () => {
+    // Cursor at 3 on "packet", expecting 'k'. They notice and hit 'k'.
+    expect(resolveLockedKey('packet', 3, 'k', 'hold', true)).toEqual({
+      kind: 'hit',
+      typed: 4,
+      complete: false,
     })
+  })
+
+  test('recovery: the player carries on with the next character', () => {
+    // Cursor at 3 expecting 'k'. They do not notice and send 'e', the letter
+    // after it, so the fumbled 'k' is skipped and the word carries on.
+    expect(resolveLockedKey('packet', 3, 'e', 'hold', true)).toEqual({
+      kind: 'hit',
+      typed: 5,
+      complete: false,
+    })
+  })
+
+  test('skipping ahead is only offered while recovering', () => {
+    // The same key, with no slip behind it, is simply wrong. Otherwise a player
+    // could skip characters at will.
+    expect(resolveLockedKey('packet', 3, 'e', 'hold', false).kind).toBe('wrong')
   })
 
   test('the reset policy sends the player back to the start of the sequence', () => {

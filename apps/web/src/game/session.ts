@@ -143,10 +143,10 @@ interface Archetype {
  * the spread between them small.
  */
 const ARCHETYPES: Record<EnemyKind, Archetype> = {
-  drone: { band: 'medium', speed: 34, errorPolicy: 'advance', burst: 1 },
-  swarm: { band: 'short', speed: 52, errorPolicy: 'advance', burst: 3 },
-  tank: { band: 'long', speed: 20, errorPolicy: 'advance', burst: 1 },
-  sprinter: { band: 'short', speed: 96, errorPolicy: 'advance', burst: 1 },
+  drone: { band: 'medium', speed: 34, errorPolicy: 'hold', burst: 1 },
+  swarm: { band: 'short', speed: 52, errorPolicy: 'hold', burst: 3 },
+  tank: { band: 'long', speed: 20, errorPolicy: 'hold', burst: 1 },
+  sprinter: { band: 'short', speed: 96, errorPolicy: 'hold', burst: 1 },
   // The one archetype where a mistake still costs time rather than only score.
   shield: { band: 'medium', speed: 26, errorPolicy: 'reset', burst: 1 },
 }
@@ -224,6 +224,8 @@ export class RunSession {
   private lastStage: RunStage = 'calibration'
   /** When the player last lost the word they were typing. */
   private targetLostAtMs = -Infinity
+  /** When the last wrong key landed on the word being typed. */
+  private wordErrorAtMs = -Infinity
   /** Time spent inside words, as opposed to waiting for one to arrive. */
   private typingMs = 0
   private feedback: Feedback[] = []
@@ -286,6 +288,7 @@ export class RunSession {
     this.announcedStage = null
     this.shielded = false
     this.targetLostAtMs = -Infinity
+    this.wordErrorAtMs = -Infinity
     this.typingMs = 0
     this.feedback = []
 
@@ -518,6 +521,23 @@ export class RunSession {
       this.lastInputAtMs = nowMs
       this.targetLostAtMs = nowMs
     }
+  }
+
+  /**
+   * Abandons the run and returns to the title.
+   *
+   * Nothing is recorded. A run stopped halfway is not a run the player
+   * finished, and folding it into personal bests and lifetime accuracy would
+   * make every one of those numbers describe something that did not happen.
+   */
+  abandon(): void {
+    this.phase = 'title'
+    this.enemies = []
+    this.beams = []
+    this.lockedId = null
+    this.prefix = ''
+    this.feedback = []
+    this.summary = null
   }
 
   /** Handle one printable character. */
@@ -813,11 +833,24 @@ export class RunSession {
 
   private applyLockedKey(enemy: Enemy, char: string, nowMs: number, pressure: number): void {
     const policy = ARCHETYPES[enemy.kind].errorPolicy
-    const result = resolveLockedKey(enemy.word, enemy.typed, char, policy)
+    // Recovery is offered only in the moment after a slip, so a player cannot
+    // skip characters at will.
+    const recovering = nowMs - this.wordErrorAtMs < IN_FLIGHT_MS
+    const result = resolveLockedKey(enemy.word, enemy.typed, char, policy, recovering)
     const previousKey = this.wordKeys[this.wordKeys.length - 1] ?? null
     const previousTime = this.wordTimesMs[this.wordTimesMs.length - 1]
 
     if (result.kind === 'wrong') {
+      // One slip is charged once. The keys a fast typist had already sent
+      // behind it are not each a fresh mistake, so they pass silently.
+      const alreadyCharged = recovering
+      this.wordErrorAtMs = nowMs
+
+      if (alreadyCharged) {
+        this.keysTotal -= 1
+        return
+      }
+
       this.lastErrorAtMs = nowMs
       // A slip near the start spoils the whole word, one near the end spoils
       // almost nothing, so the two are not charged the same.
@@ -846,17 +879,11 @@ export class RunSession {
       // with it, so the abandoned attempt is not charged to the retry.
       if (lost > 0) this.beginWordWindow()
 
-      // The cursor moved past the mistake, so a slip on the final character
-      // still finishes the word rather than stranding it one key from death.
-      if (result.complete) {
-        this.wordKeys.push(char)
-        this.wordTimesMs.push(nowMs)
-        this.completeWord(enemy, nowMs)
-      }
       return
     }
 
     this.keysCorrect += 1
+    this.wordErrorAtMs = -Infinity
     enemy.typed = result.typed
     this.wordKeys.push(char)
     this.wordTimesMs.push(nowMs)
@@ -952,6 +979,7 @@ export class RunSession {
    * through `registerError`.
    */
   private beginWordWindow(): void {
+    this.wordErrorAtMs = -Infinity
     this.wordTimesMs = []
     this.wordKeys = []
     this.wordStartCorrect = this.keysCorrect

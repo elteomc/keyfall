@@ -180,6 +180,17 @@ window.addEventListener('keydown', (event) => {
   }
 
   if (session.phase === 'paused') {
+    // Quitting lives behind the pause rather than on a live key, so a run can
+    // never be thrown away by a stray keystroke mid-word.
+    if (event.key.toLowerCase() === 'q') {
+      event.preventDefault()
+      effects.clear()
+      session.abandon()
+      renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+      overlayPhase = session.phase
+      return
+    }
+
     if (event.key === 'Escape' || event.key === 'Enter') {
       event.preventDefault()
       // The frame clock skips the paused stretch, so nothing moves on resume.

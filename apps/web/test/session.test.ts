@@ -176,24 +176,50 @@ describe('RunSession', () => {
     expect(run.session.currentSummary()!.accuracy).toBe(1)
   })
 
-  test('a wrong key advances past the mistake instead of blocking', () => {
+  test('a slip does not cost the word, and is charged once', () => {
     const run = driver()
     run.advance(4000)
     run.session.enemies = [fakeEnemy('a', 'packet', 300)]
 
-    // One slip, then the player carries on at speed as a real typist does.
+    // One slip, then the player carries on at speed without noticing.
     run.type('pac', 40)
     run.type('j', 40)
     run.type('et', 40)
 
-    // The word dies. A slip costs accuracy and combo, not the target.
     expect(run.session.kills).toBe(1)
     run.advance(120000)
 
     const summary = run.session.currentSummary()!
-    expect(summary.accuracy).toBeLessThan(1)
-    // Exactly one wrong key charged, not one per key that followed it.
-    expect(summary.accuracy).toBeCloseTo(5 / 6, 2)
+    // Six keys sent, one of them wrong. Charged once, not once per key that
+    // followed it, and the fumbled 'k' is skipped rather than demanded back.
+    expect(summary.accuracy).toBeCloseTo(5 / 6, 5)
+  })
+
+  test('a slip can be fixed by retyping the letter that was missed', () => {
+    const run = driver()
+    run.advance(4000)
+    run.session.enemies = [fakeEnemy('a', 'packet', 300)]
+
+    run.type('pac', 40)
+    run.type('j', 40)
+    // The player notices and goes back for the character they fumbled.
+    run.type('ket', 40)
+
+    expect(run.session.kills).toBe(1)
+  })
+
+  test('typing rubbish never destroys a word', () => {
+    const run = driver()
+    run.advance(4000)
+    const enemy = fakeEnemy('a', 'packet', 300)
+    run.session.enemies = [enemy]
+
+    run.type('pac', 40)
+    run.type('zzzzzzzz', 40)
+
+    // Accuracy has to have stakes. A word may only be finished by typing it.
+    expect(run.session.kills).toBe(0)
+    expect(enemy.typed).toBe(3)
   })
 
   test('a shield still makes a mistake cost time', () => {

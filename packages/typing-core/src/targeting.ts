@@ -23,22 +23,15 @@ export type UnlockedResolution =
 /**
  * What a wrong key does to progress already made on the locked target.
  *
- * `advance` moves the cursor past the mistake, exactly as a typing test scores
- * a substitution. The character is recorded wrong and the word carries on, so a
- * slip costs accuracy and combo but not time.
- *
- * This matters more than it sounds. Holding the cursor still on a wrong key
- * assumes the player stops dead and resumes from the character the game is
- * waiting for, and nobody types like that. A fast typist has already sent the
- * next two keys, and each of them was then charged as another error. One slip
- * in `packet` produced three wrong-key sounds on a word typed almost perfectly.
+ * `hold` keeps the cursor where it is. A wrong key never advances a word, so
+ * typing rubbish can never destroy one. Recovery is handled separately, below.
  *
  * `reset` is the shield rule from section 3.4, where a wrong key sends the
  * player back to the start. Keeping this a parameter keeps the rule with the
  * archetype that owns it rather than scattering enemy cases through the
  * session.
  */
-export type ErrorPolicy = 'advance' | 'reset'
+export type ErrorPolicy = 'hold' | 'reset'
 
 export type LockedResolution =
   | { kind: 'hit'; typed: number; complete: boolean }
@@ -72,25 +65,49 @@ export function resolveUnlockedKey(
 }
 
 /** Apply one character to the locked target. */
+/**
+ * Apply one character to the locked target.
+ *
+ * `recovering` says the previous key on this word was wrong, which is what
+ * makes both kinds of human recovery work:
+ *
+ * - You notice and retype the character you fumbled. That is just a correct
+ *   key, and it always worked.
+ * - You do not notice, and carry on with the *next* character. Only allowed
+ *   while recovering, and only for the one character immediately after the one
+ *   still expected, so the fumbled letter is skipped and the word carries on.
+ *
+ * Both paths require a character the word actually wants. That is the property
+ * an earlier version threw away: it advanced the cursor on any wrong key, so a
+ * player could type six wrong letters and still destroy a six-letter word.
+ * Accuracy has to have stakes, and a word may only ever be finished by typing
+ * it.
+ */
 export function resolveLockedKey(
   sequence: string,
   typed: number,
   key: string,
-  policy: ErrorPolicy = 'advance',
+  policy: ErrorPolicy = 'hold',
+  recovering = false,
 ): LockedResolution {
   const expected = sequence[typed]
 
   // Past the end of the word. Nothing survives and nothing completes.
   if (expected === undefined) return { kind: 'wrong', expected: '', typed, complete: false }
 
-  if (key !== expected) {
-    if (policy === 'reset') return { kind: 'wrong', expected, typed: 0, complete: false }
+  if (key === expected) {
     const nextTyped = typed + 1
-    return { kind: 'wrong', expected, typed: nextTyped, complete: nextTyped >= sequence.length }
+    return { kind: 'hit', typed: nextTyped, complete: nextTyped >= sequence.length }
   }
 
-  const nextTyped = typed + 1
-  return { kind: 'hit', typed: nextTyped, complete: nextTyped >= sequence.length }
+  // Carrying on past a fumbled character, rather than going back for it.
+  if (recovering && key === sequence[typed + 1]) {
+    const nextTyped = typed + 2
+    return { kind: 'hit', typed: nextTyped, complete: nextTyped >= sequence.length }
+  }
+
+  if (policy === 'reset') return { kind: 'wrong', expected, typed: 0, complete: false }
+  return { kind: 'wrong', expected, typed, complete: false }
 }
 
 /**

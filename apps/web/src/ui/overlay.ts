@@ -47,7 +47,7 @@ function titleCard(context: OverlayContext): string {
         <li>A slip costs accuracy and combo, not the word. Keep going.</li>
         <li>Shielded words are the exception. One slip and the word starts over.</li>
         <li>A hot streak absorbs one breach. A peak streak brings richer words.</li>
-        <li><kbd>Esc</kbd> pauses, and releases your current target.</li>
+        <li><kbd>Esc</kbd> pauses. From there, <kbd>Q</kbd> stops the run.</li>
         <li>Three breaches end the run.</li>
         <li><kbd>Ctrl</kbd>+<kbd>M</kbd> turns the sound off and on.</li>
       </ul>
@@ -105,7 +105,11 @@ function pausedCard(): string {
       <h1>Paused</h1>
       <p class="lede">Nothing is falling and the clock is stopped.</p>
       <p class="prompt">Press <kbd>Esc</kbd> or <kbd>Enter</kbd> to carry on</p>
-      <p class="note">Your target was released, which costs nothing.</p>
+      <p class="note">
+        Your target was released, which costs nothing.
+        Press <kbd>Q</kbd> to stop and return to the title. A run you stop is
+        not recorded.
+      </p>
     </section>
   `
 }
