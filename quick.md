@@ -8,9 +8,10 @@ metrics, digram statistics, combo, observations), and `apps/web` holds the
 canvas game layer. The dependency runs one way only, and nothing in
 `typing-core` may touch the DOM or the renderer.
 
-Milestone 0 is closed. All seven milestone 1 items are now built: five
-archetypes, score, combo, a pressure curve, effects and audio, 5 to 10 minute
-runs, and a result screen.
+Milestone 0 is closed. All seven milestone 1 items are built: five archetypes,
+score, combo, a pressure curve, effects and audio, 5 to 10 minute runs, and a
+result screen. Milestone 2 is built too: five of its six items fell out of
+milestone 1, and local persistence has now been added.
 
 A run now has an arc rather than only a failure. It follows the eight minute
 shape in section 9 of the game design, and at 6:30 spawning stops and a closing
@@ -23,15 +24,22 @@ arena, and rhythm across the two halves of the run. `typing-core` returns
 structure and the overlay picks the wording, so a tentative finding cannot be
 quietly promoted into a fact.
 
+Runs are now kept between sessions. The profile holds aggregate skill
+statistics, personal bests, corpus exposure and long-term digram timings in
+IndexedDB, with raw events for the last three runs only. It can be exported,
+imported and erased from the title screen.
+
 ## Status
 
-Milestone 1, all seven items built and none of them playtested. 115 tests pass,
+Milestones 1 and 2 built, neither playtested. 138 tests pass,
 `npm run typecheck` and `npm run build` are clean. Note for anyone running the
 suite: the default vitest fork pool crashes in a sandboxed shell, and
 `npx vitest run --pool=threads` runs the same suite fine.
 
-Milestone 1's exit criterion is "friends voluntarily replay", and milestone 0's
-is "it is already satisfying to type". Neither can be closed from here.
+Three exit criteria are now waiting on the same thing, a human playing the
+game: milestone 0's "it is already satisfying to type", milestone 1's "friends
+voluntarily replay", and milestone 2's "profile statistics are stable enough to
+resemble observed typing behavior". None can be closed from here.
 
 ## Open questions
 
@@ -49,6 +57,9 @@ is "it is already satisfying to type". Neither can be closed from here.
   reaching it as arriving and leave it alone?
 - Run length is section 21 question 8, to be settled by play. The arc currently
   lands at about 6 minutes 40.
+- The IndexedDB path has never executed. vitest has no `indexedDB`, so the
+  memory store carries the tested contract and every real operation is wrapped
+  to degrade rather than throw. The first playtest is its first run.
 
 ## Repository layout
 
@@ -61,6 +72,10 @@ This file is the one status document that ships, and the README points at it.
 
 ## Latest change
 
+- Added local persistence, the one milestone 2 item that was not already built.
+  `packages/typing-core/src/profile.ts` holds the pure fold, and
+  `apps/web/src/game/storage.ts` holds the IndexedDB store with a memory
+  fallback. Export, import and erase are on the title screen. Recorded as D18.
 - Gave a run an ending: a stage arc in `apps/web/src/game/stages.ts`, a closing
   wave, and a `cleared` outcome. Recorded as D15.
 - Fixed a difficulty cliff the arc exposed. Simulating full runs showed the
