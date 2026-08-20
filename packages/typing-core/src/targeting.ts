@@ -23,18 +23,31 @@ export type UnlockedResolution =
 /**
  * What a wrong key does to progress already made on the locked target.
  *
- * `keep` is the default the whole game ran on: the mistake costs accuracy and
- * nothing else. `reset` is the shield rule from section 3.4 of the game
- * design, where a single wrong key sends the player back to the start of the
- * sequence. Making this a parameter keeps the rule with the archetype that
- * owns it, instead of scattering enemy special cases through the session.
+ * `advance` moves the cursor past the mistake, exactly as a typing test scores
+ * a substitution. The character is recorded wrong and the word carries on, so a
+ * slip costs accuracy and combo but not time.
+ *
+ * This matters more than it sounds. Holding the cursor still on a wrong key
+ * assumes the player stops dead and resumes from the character the game is
+ * waiting for, and nobody types like that. A fast typist has already sent the
+ * next two keys, and each of them was then charged as another error. One slip
+ * in `packet` produced three wrong-key sounds on a word typed almost perfectly.
+ *
+ * `reset` is the shield rule from section 3.4, where a wrong key sends the
+ * player back to the start. Keeping this a parameter keeps the rule with the
+ * archetype that owns it rather than scattering enemy cases through the
+ * session.
  */
-export type ErrorPolicy = 'keep' | 'reset'
+export type ErrorPolicy = 'advance' | 'reset'
 
 export type LockedResolution =
   | { kind: 'hit'; typed: number; complete: boolean }
-  /** `typed` is the progress that survives the mistake. */
-  | { kind: 'wrong'; expected: string; typed: number }
+  /**
+   * `typed` is where the cursor sits after the mistake, and `complete` is set
+   * when the mistake was the last character, so a slip cannot strand a word one
+   * key from death.
+   */
+  | { kind: 'wrong'; expected: string; typed: number; complete: boolean }
 
 /** Apply one character while no target is locked. */
 export function resolveUnlockedKey(
@@ -63,16 +76,34 @@ export function resolveLockedKey(
   sequence: string,
   typed: number,
   key: string,
-  policy: ErrorPolicy = 'keep',
+  policy: ErrorPolicy = 'advance',
 ): LockedResolution {
-  const survives = policy === 'reset' ? 0 : typed
-
   const expected = sequence[typed]
-  if (expected === undefined) return { kind: 'wrong', expected: '', typed: survives }
-  if (key !== expected) return { kind: 'wrong', expected, typed: survives }
+
+  // Past the end of the word. Nothing survives and nothing completes.
+  if (expected === undefined) return { kind: 'wrong', expected: '', typed, complete: false }
+
+  if (key !== expected) {
+    if (policy === 'reset') return { kind: 'wrong', expected, typed: 0, complete: false }
+    const nextTyped = typed + 1
+    return { kind: 'wrong', expected, typed: nextTyped, complete: nextTyped >= sequence.length }
+  }
 
   const nextTyped = typed + 1
   return { kind: 'hit', typed: nextTyped, complete: nextTyped >= sequence.length }
+}
+
+/**
+ * How much of a word a mistake wasted, in [0, 1].
+ *
+ * A slip on the first character spoils the whole word, a slip on the last
+ * spoils almost none of it, so the two should not cost the same. The caller
+ * turns this into a penalty.
+ */
+export function errorSeverity(sequenceLength: number, index: number): number {
+  if (sequenceLength <= 0) return 1
+  const remaining = sequenceLength - index
+  return Math.min(1, Math.max(0, remaining / sequenceLength))
 }
 
 /**

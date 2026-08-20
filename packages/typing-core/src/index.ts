@@ -7,7 +7,12 @@ export type {
   LockedResolution,
   ErrorPolicy,
 } from './targeting'
-export { resolveUnlockedKey, resolveLockedKey, distinguishingPrefix } from './targeting'
+export {
+  resolveUnlockedKey,
+  resolveLockedKey,
+  distinguishingPrefix,
+  errorSeverity,
+} from './targeting'
 
 export type { RhythmOptions } from './metrics'
 export {

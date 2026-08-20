@@ -70,8 +70,13 @@ export interface ComboOptions {
   maxSpeedRatio?: number
   /** Rhythm assumed when no word in the window was long enough to score. */
   neutralRhythm?: number
-  /** Fraction of the combo that survives one error. */
+  /**
+   * Fraction of the combo surviving a mistake that spoiled a whole word.
+   * A mistake on the last character keeps `maxErrorRetention` instead.
+   */
   errorRetention?: number
+  /** Fraction surviving a mistake that spoiled almost nothing. */
+  maxErrorRetention?: number
   /** Combo drained per second while the caller reports the player as idle. */
   decayPerSecond?: number
   /** Ceiling on the accumulated combo. */
@@ -99,7 +104,8 @@ function resolve(options: ComboOptions): ComboConfig {
     minSpeedRatio: options.minSpeedRatio ?? 0.5,
     maxSpeedRatio: options.maxSpeedRatio ?? 1.6,
     neutralRhythm: options.neutralRhythm ?? 0.75,
-    errorRetention: options.errorRetention ?? 0.5,
+    errorRetention: options.errorRetention ?? 0.4,
+    maxErrorRetention: options.maxErrorRetention ?? 0.85,
     decayPerSecond: options.decayPerSecond ?? 1,
     maxValue: options.maxValue ?? 40,
     tierThresholds: options.tierThresholds ?? [4, 10, 20],
@@ -272,8 +278,21 @@ export class ComboTracker {
    * would make every long word a gamble, which punishes the player for trying
    * rather than for being careless.
    */
-  registerError(): void {
-    this.current *= this.config.errorRetention
+  /**
+   * Charge one mistake.
+   *
+   * `severity` in [0, 1] is how much of the word the mistake spoiled, so a slip
+   * on the first character costs far more than one on the last. A caller with
+   * nothing to weigh, such as a breach, passes the default and is charged in
+   * full.
+   */
+  registerError(severity = 1): void {
+    const weight = clamp(severity, 0, 1)
+    const retention =
+      this.config.maxErrorRetention -
+      (this.config.maxErrorRetention - this.config.errorRetention) * weight
+
+    this.current *= retention
     if (this.current < 0.01) this.current = 0
     this.settleTier()
   }

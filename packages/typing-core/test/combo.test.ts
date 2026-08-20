@@ -102,9 +102,22 @@ describe('ComboTracker', () => {
     const built = combo.value()
     expect(built).toBeGreaterThan(0)
 
-    // Half the combo survives one mistake, rather than none of it.
+    // A mistake that spoiled a whole word costs the most, and still leaves
+    // something rather than resetting to nothing.
     combo.registerError()
-    expect(combo.value()).toBeCloseTo(built / 2, 10)
+    expect(combo.value()).toBeCloseTo(built * 0.4, 10)
+  })
+
+  test('a mistake near the end of a word costs less than one at the start', () => {
+    function remaining(severity: number): number {
+      const combo = new ComboTracker()
+      for (let i = 0; i < 6; i++) combo.completeWord(word(7, 100))
+      combo.registerError(severity)
+      return combo.value()
+    }
+
+    expect(remaining(1)).toBeLessThan(remaining(0.5))
+    expect(remaining(0.5)).toBeLessThan(remaining(1 / 7))
   })
 
   test('an error also slows the next few words, through recent accuracy', () => {

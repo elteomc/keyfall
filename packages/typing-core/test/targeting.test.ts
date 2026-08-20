@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   distinguishingPrefix,
+  errorSeverity,
   resolveLockedKey,
   resolveUnlockedKey,
 } from '../src/targeting'
@@ -53,8 +54,25 @@ describe('resolveLockedKey', () => {
     expect(resolveLockedKey('run', 2, 'n')).toEqual({ kind: 'hit', typed: 3, complete: true })
   })
 
-  test('a wrong character reports what was expected and keeps the lock', () => {
-    expect(resolveLockedKey('run', 1, 'x')).toEqual({ kind: 'wrong', expected: 'u', typed: 1 })
+  test('a wrong character advances past the mistake by default', () => {
+    // Holding the cursor still assumed the player stops dead and resumes from
+    // the character the game wants. A fast typist has already sent the next two
+    // keys, and each was charged as another error.
+    expect(resolveLockedKey('run', 1, 'x')).toEqual({
+      kind: 'wrong',
+      expected: 'u',
+      typed: 2,
+      complete: false,
+    })
+  })
+
+  test('a slip on the last character still finishes the word', () => {
+    expect(resolveLockedKey('run', 2, 'x')).toEqual({
+      kind: 'wrong',
+      expected: 'n',
+      typed: 3,
+      complete: true,
+    })
   })
 
   test('the reset policy sends the player back to the start of the sequence', () => {
@@ -62,7 +80,15 @@ describe('resolveLockedKey', () => {
       kind: 'wrong',
       expected: 'l',
       typed: 0,
+      complete: false,
     })
+  })
+
+  test('severity scales with how much of the word a mistake spoiled', () => {
+    expect(errorSeverity(6, 0)).toBe(1)
+    expect(errorSeverity(6, 5)).toBeCloseTo(1 / 6, 5)
+    expect(errorSeverity(6, 0)).toBeGreaterThan(errorSeverity(6, 3))
+    expect(errorSeverity(6, 3)).toBeGreaterThan(errorSeverity(6, 5))
   })
 
   test('the policy only applies to mistakes, never to correct keys', () => {
