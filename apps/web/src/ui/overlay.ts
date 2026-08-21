@@ -193,9 +193,21 @@ function trainingLine(selection: SelectorReport): string {
   const trained = selection.trained.slice(0, 3)
   if (trained.length === 0 || selection.counts.weakness === 0) return ''
 
-  const names = trained.map((t) => `<code>${t.digram.replace(' ', '')}</code>`).join(' and ')
   const plural = selection.counts.weakness === 1 ? 'target was' : 'targets were'
-  return `<p class="training">${selection.counts.weakness} ${plural} chosen to put ${names} in front of you. Those are transitions where you are slower than the rest of your typing predicts.</p>`
+  const opening = `${selection.counts.weakness} ${plural} chosen to put`
+
+  // A key beats the pairs that reach it, when the model has found one. "You are
+  // slow reaching for t" is one thing a player can work on. The same finding
+  // spelled as `st`, `nt`, `et` and `ct` is four things, and none of them names
+  // what they have in common.
+  if (selection.reaches.length > 0) {
+    const keys = selection.reaches.map((r) => `<code>${r.key}</code>`).join(' and ')
+    const verb = selection.reaches.length === 1 ? 'a key' : 'keys'
+    return `<p class="training">${opening} ${keys} in front of you, ${verb} you reach for more slowly than the rest of your typing.</p>`
+  }
+
+  const names = trained.map((t) => `<code>${t.digram.replace(' ', '')}</code>`).join(' and ')
+  return `<p class="training">${opening} ${names} in front of you. Those are transitions where you are slower than the rest of your typing predicts.</p>`
 }
 
 function summaryCard(summary: RunSummary | null, context: OverlayContext): string {

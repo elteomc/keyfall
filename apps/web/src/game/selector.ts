@@ -1,6 +1,7 @@
 import {
   type Bucket,
   type Candidate,
+  type LandingEstimate,
   type Profile,
   SkillModel,
   buildPool,
@@ -85,6 +86,14 @@ export interface SelectorReport {
   counts: Record<Bucket, number>
   /** Weakness digrams actually served, most served first. */
   trained: { digram: string; count: number }[]
+  /**
+   * Keys the run put in front of the player that they reach for slowly.
+   *
+   * Named separately from the pairs because it is the better sentence. Four
+   * findings of `st`, `nt`, `et` and `ct` are one finding about `t`, and only
+   * the second is something a player can act on.
+   */
+  reaches: LandingEstimate[]
 }
 
 function emptyCounts(): Record<Bucket, number> {
@@ -136,12 +145,19 @@ export class WordSelector {
 
   /** What the run trained, for the result screen. */
   report(): SelectorReport {
+    const trained = [...this.trained.entries()]
+      .map(([digram, count]) => ({ digram, count }))
+      .sort((a, b) => b.count - a.count)
+
+    // Only reaches the run actually served, so the sentence describes this run
+    // rather than the profile behind it.
+    const served = new Set(trained.map((t) => t.digram.split(' ')[1]))
+
     return {
       adapting: this.model.confident(),
       counts: { ...this.counts },
-      trained: [...this.trained.entries()]
-        .map(([digram, count]) => ({ digram, count }))
-        .sort((a, b) => b.count - a.count),
+      trained,
+      reaches: this.model.reaches(3).filter((r) => served.has(r.key)),
     }
   }
 

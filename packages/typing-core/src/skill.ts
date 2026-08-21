@@ -8,13 +8,30 @@
  *
  * Two ideas carry the whole file.
  *
- * **Hierarchical shrinkage.** A digram estimate is pulled toward the average
- * for its movement class, and a class average is pulled toward the player's
- * global average, each in proportion to how little evidence stands behind it.
- * Three observations of `qz` therefore say almost nothing and three hundred say
- * almost everything, with no threshold in between where the estimate suddenly
- * starts being trusted. Section 5 already applies this one level deep. Section
- * 6 asks for the second level, and this is it.
+ * **Hierarchical shrinkage.** A digram estimate is pulled toward what the model
+ * predicts for it, and every layer of that prediction is pulled toward the layer
+ * behind it, each in proportion to how little evidence stands behind it. Three
+ * observations of `qz` therefore say almost nothing and three hundred say almost
+ * everything, with no threshold in between where the estimate suddenly starts
+ * being trusted. Section 5 already applies this one level deep. Section 6 asks
+ * for more, and this is it.
+ *
+ * **Two questions of the same data, not one question with finer buckets.** The
+ * prediction asks what kind of movement this is *and* which key it lands on,
+ * and multiplies the two answers. The distinction matters and the first version
+ * of this file got it wrong. Combining the features into one bucket key would
+ * give six classes times twenty-six keys, so 156 buckets holding a couple of
+ * dozen keystrokes each, which is the sparsity the classes existed to escape.
+ * Asking two separate questions divides nothing: every keystroke informs both
+ * its class and its landing key.
+ *
+ * That mistake cost real accuracy. Measured against the first real player
+ * profile, movement class alone explained **2.9 percent** of the variation in
+ * their transition times and the landing key alone explained **25.6**. The axis
+ * that was left out mattered roughly nine times more than the one that was
+ * built. Their four slowest pairs, `st`, `nt`, `et` and `ct`, all landed on `t`
+ * and sat in three different movement classes, so each class averaged the
+ * penalty away and none of them could see it.
  *
  * **Weakness is relative to the player, not to the keyboard.** A slow typist is
  * slow everywhere, so ranking their digrams by raw milliseconds just recovers
@@ -34,6 +51,12 @@ export interface SkillModelOptions {
   digramPrior?: number
   /** Hits at which a class is trusted as much as the global average. */
   classPrior?: number
+  /** Hits at which a landing key is trusted as much as no effect at all. */
+  landingPrior?: number
+  /** Hits a landing key needs before it may be called a slow reach. */
+  minLandingHits?: number
+  /** Factor at or above which a landing key is a slow reach. */
+  landingStrain?: number
   /** Milliseconds an expected wrong key adds to a word's cost. */
   errorPenaltyMs?: number
   /** Hits a digram needs before it may be called a weakness. */
@@ -56,6 +79,9 @@ type Config = Required<SkillModelOptions>
 const DEFAULTS: Config = {
   digramPrior: 8,
   classPrior: 40,
+  landingPrior: 30,
+  minLandingHits: 40,
+  landingStrain: 1.2,
   errorPenaltyMs: 400,
   minWeaknessHits: 12,
   weaknessStrain: 1.25,
@@ -69,6 +95,13 @@ export interface DigramEstimate {
   kind: DigramClass
   /** Hierarchical estimate in milliseconds, usable even with no samples. */
   meanMs: number
+  /**
+   * What the model predicts before this pair's own evidence is folded in.
+   *
+   * This is the number that makes an unseen pair estimable, and the one the
+   * landing key term improves.
+   */
+  expectedMs: number
   /** Hierarchical error rate in [0, 1]. */
   errorRate: number
   /** Correct keystrokes observed for this pair. */
@@ -81,6 +114,14 @@ export interface DigramEstimate {
   strain: number
   /** Whether the residual is both large enough and well enough evidenced. */
   weakness: boolean
+}
+
+/** A key this player reaches for more slowly than the rest of their typing. */
+export interface LandingEstimate {
+  key: string
+  /** How much slower than predicted, where 1 is exactly as predicted. */
+  factor: number
+  hits: number
 }
 
 export interface WordCost {
@@ -111,6 +152,18 @@ function shrink(observed: number, prior: number, evidence: number, k: number): n
 }
 
 /**
+ * Bounds on how far one pair may pull its landing key.
+ *
+ * A landing factor is an average of ratios, and an average of ratios is easily
+ * dragged by a single extreme one with a large sample count behind it. Clamping
+ * each pair's contribution caps any one of them without needing a median. Real
+ * landing effects come from many pairs agreeing, so this never touches them:
+ * the strongest one measured on a real profile was 1.42.
+ */
+const MIN_RESIDUAL = 0.5
+const MAX_RESIDUAL = 2.5
+
+/**
  * A read-only view of one player's motor profile.
  *
  * Built once from a stored profile and then queried, rather than updated as a
@@ -124,6 +177,8 @@ export class SkillModel {
   private readonly cells = new Map<string, Cell>()
   private readonly classMeanMsByKind = new Map<DigramClass, number>()
   private readonly classErrorRateByKind = new Map<DigramClass, number>()
+  private readonly landingFactorByKey = new Map<string, number>()
+  private readonly landingHitsByKey = new Map<string, number>()
   private readonly globalMeanMsValue: number
   private readonly globalErrorRateValue: number
   private readonly totalHitsValue: number
@@ -185,6 +240,46 @@ export class SkillModel {
         shrink(observedErrors, this.globalErrorRateValue, samples, this.config.classPrior),
       )
     }
+
+    this.buildLandingFactors()
+  }
+
+  /**
+   * How much slower each key is to arrive at than its movement alone explains.
+   *
+   * Measured on what the class prediction leaves over, so the two terms cannot
+   * count the same slowness twice. A key with no effect comes out at 1.0 and the
+   * model behaves exactly as it did before this term existed, which is what
+   * makes it safe to add for players who do not have a slow reach.
+   */
+  private buildLandingFactors(): void {
+    const weighted = new Map<string, number>()
+
+    for (const [key, cell] of this.cells) {
+      const [from, to] = key.split(' ')
+      if (from === undefined || to === undefined || cell.hits <= 0) continue
+      const kind = classifyDigram(from, to)
+      if (kind === null) continue
+
+      const predicted = this.classMeanMs(kind)
+      if (predicted <= 0) continue
+
+      const residual = Math.min(
+        MAX_RESIDUAL,
+        Math.max(MIN_RESIDUAL, cell.meanMs / predicted),
+      )
+      weighted.set(to, (weighted.get(to) ?? 0) + residual * cell.hits)
+      this.landingHitsByKey.set(to, (this.landingHitsByKey.get(to) ?? 0) + cell.hits)
+    }
+
+    for (const [to, total] of weighted) {
+      const hits = this.landingHitsByKey.get(to) ?? 0
+      if (hits <= 0) continue
+      this.landingFactorByKey.set(
+        to,
+        shrink(total / hits, 1, hits, this.config.landingPrior),
+      )
+    }
   }
 
   static from(
@@ -221,6 +316,46 @@ export class SkillModel {
     return this.classErrorRateByKind.get(kind) ?? this.globalErrorRateValue
   }
 
+  /** How much slower this player is to arrive at a key. 1 is no effect. */
+  landingFactor(key: string): number {
+    return this.landingFactorByKey.get(key) ?? 1
+  }
+
+  landingHits(key: string): number {
+    return this.landingHitsByKey.get(key) ?? 0
+  }
+
+  /**
+   * What the model predicts for a pair before that pair's own evidence.
+   *
+   * Two questions of the same data, multiplied: what kind of movement is this,
+   * and which key does it land on. This is the number that lets the model price
+   * a transition the player has never made.
+   */
+  expected(from: string, to: string): number | null {
+    const kind = classifyDigram(from, to)
+    if (kind === null) return null
+    return this.classMeanMs(kind) * this.landingFactor(to)
+  }
+
+  /**
+   * Keys this player reaches for slowly, worst first.
+   *
+   * A better sentence for a person than the pairs underneath it. Four separate
+   * findings of `st`, `nt`, `et` and `ct` are one finding about `t`, and only
+   * the second is something a player can do anything with.
+   */
+  reaches(limit = 3): LandingEstimate[] {
+    const out: LandingEstimate[] = []
+    for (const [key, factor] of this.landingFactorByKey) {
+      const hits = this.landingHits(key)
+      if (hits >= this.config.minLandingHits && factor >= this.config.landingStrain) {
+        out.push({ key, factor, hits })
+      }
+    }
+    return out.sort((a, b) => b.factor - a.factor).slice(0, limit)
+  }
+
   /** The estimate for one transition, with or without samples behind it. */
   digram(from: string, to: string): DigramEstimate | null {
     const kind = classifyDigram(from, to)
@@ -229,10 +364,11 @@ export class SkillModel {
     const cell = this.cells.get(`${from} ${to}`)
     const classMs = this.classMeanMs(kind)
     const classErrors = this.classErrorRate(kind)
+    const expectedMs = classMs * this.landingFactor(to)
 
     const hits = cell?.hits ?? 0
     const samples = cell?.samples ?? 0
-    const meanMs = shrink(cell?.meanMs ?? classMs, classMs, hits, this.config.digramPrior)
+    const meanMs = shrink(cell?.meanMs ?? expectedMs, expectedMs, hits, this.config.digramPrior)
     const errorRate = shrink(
       samples > 0 ? (cell?.errors ?? 0) / samples : classErrors,
       classErrors,
@@ -241,8 +377,15 @@ export class SkillModel {
     )
 
     // Strain is read off the raw observation, not the shrunk estimate. The
-    // shrunk one is pulled toward the class average by construction, so using
-    // it here would quietly erase the very residual being looked for.
+    // shrunk one is pulled toward the prediction by construction, so using it
+    // here would quietly erase the very residual being looked for.
+    //
+    // It is also compared against the *class* baseline rather than the full
+    // prediction, which looks like an inconsistency and is the point. The class
+    // term removes what is hard for everybody, which is not this player's
+    // problem to train. The landing term is personal, so folding it in here
+    // would explain a slow `t` away and hide the most trainable thing in the
+    // profile behind the very machinery built to find it.
     const observedMs = cell?.meanMs ?? classMs
     const observedErrorRate = samples > 0 ? (cell?.errors ?? 0) / samples : classErrors
     const timeRatio = classMs > 0 ? observedMs / classMs : 1
@@ -254,6 +397,7 @@ export class SkillModel {
       to,
       kind,
       meanMs,
+      expectedMs,
       errorRate,
       hits,
       strain,

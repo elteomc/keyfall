@@ -26,13 +26,21 @@ export interface TypistOptions {
   slow?: Record<string, number>
   /** Digram to an absolute error rate. */
   errors?: Record<string, number>
+  /**
+   * Landing key to how many times slower this player is to arrive at it.
+   *
+   * Applies to every pair ending in that key, whatever the movement, which is
+   * the shape the first real profile showed: `st`, `nt`, `et` and `ct` were all
+   * slow and sat in three different movement classes.
+   */
+  slowLanding?: Record<string, number>
   samples?: number
   /** Scales every class, so a whole typist can be slower without being weaker. */
   speed?: number
 }
 
 export function typist(options: TypistOptions = {}): Record<string, StoredTransition> {
-  const { slow = {}, errors = {}, samples = 60, speed = 1 } = options
+  const { slow = {}, errors = {}, slowLanding = {}, samples = 60, speed = 1 } = options
   const table: Record<string, StoredTransition> = {}
 
   for (const from of LETTERS) {
@@ -42,7 +50,7 @@ export function typist(options: TypistOptions = {}): Record<string, StoredTransi
       const pair = `${from}${to}`
       const errorRate = errors[pair] ?? 0
       table[`${from} ${to}`] = {
-        meanMs: CLASS_MS[kind] * speed * (slow[pair] ?? 1),
+        meanMs: CLASS_MS[kind] * speed * (slow[pair] ?? 1) * (slowLanding[to] ?? 1),
         samples,
         errors: Math.round(samples * errorRate),
       }

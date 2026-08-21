@@ -27,10 +27,12 @@ export interface TypistOptions {
   speed?: number
   /** Word to how many times it has been targeted. */
   exposure?: Record<string, number>
+  /** Landing key to how many times slower the player is to arrive at it. */
+  slowLanding?: Record<string, number>
 }
 
 export function typistProfile(options: TypistOptions = {}): Profile {
-  const { slow = {}, samples = 60, speed = 1, exposure = {} } = options
+  const { slow = {}, slowLanding = {}, samples = 60, speed = 1, exposure = {} } = options
   const transitions: Profile['transitions'] = {}
 
   for (const from of LETTERS) {
@@ -38,7 +40,8 @@ export function typistProfile(options: TypistOptions = {}): Profile {
       const kind = classifyDigram(from, to)
       if (!kind) continue
       transitions[`${from} ${to}`] = {
-        meanMs: (CLASS_MS[kind] ?? 150) * speed * (slow[`${from}${to}`] ?? 1),
+        meanMs:
+          (CLASS_MS[kind] ?? 150) * speed * (slow[`${from}${to}`] ?? 1) * (slowLanding[to] ?? 1),
         samples,
         errors: 0,
       }

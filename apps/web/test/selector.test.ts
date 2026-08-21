@@ -342,3 +342,39 @@ describe('through a whole run', () => {
     expect(session.currentSummary()!.selection.adapting).toBe(false)
   })
 })
+
+describe('naming a slow reach', () => {
+  test('a run reports the key when the model has found one', () => {
+    const selector = new WordSelector(
+      typistProfile({ slowLanding: { t: 1.7 }, exposure: EXPOSURE }),
+    )
+    draw(selector, 400, LOW)
+
+    const report = selector.report()
+    expect(report.counts.weakness).toBeGreaterThan(0)
+    expect(report.reaches.map((r) => r.key)).toContain('t')
+  })
+
+  test('a run reports no reach when the weakness is not about one key', () => {
+    const selector = new WordSelector(player({ li: 2.6, ra: 2.6 }))
+    draw(selector, 400, LOW)
+
+    const report = selector.report()
+    expect(report.counts.weakness).toBeGreaterThan(0)
+    expect(report.reaches).toEqual([])
+  })
+
+  test('a reach the run never served is not claimed', () => {
+    // Only the short band is drawn from, so a reach the run never put in front
+    // of the player must not appear in what the run says it trained.
+    const selector = new WordSelector(
+      typistProfile({ slowLanding: { t: 1.7 }, exposure: EXPOSURE }),
+    )
+    const rng = createRng(5)
+    for (let i = 0; i < 200; i++) selector.next('short', HIGH, NONE, rng)
+
+    for (const reach of selector.report().reaches) {
+      expect(selector.report().trained.some((t) => t.digram.endsWith(reach.key))).toBe(true)
+    }
+  })
+})

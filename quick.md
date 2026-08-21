@@ -32,7 +32,7 @@ into a fact.
 
 **Current milestone: 3, the adaptive director. Built, awaiting a playtest.**
 
-198 tests pass across 16 files, `npm run typecheck` and `npm run build` are
+208 tests pass across 16 files, `npm run typecheck` and `npm run build` are
 clean. Note for anyone running the suite: the default vitest fork pool crashes
 in a sandboxed shell, and `npx vitest run --pool=threads` runs the same suite
 fine.
@@ -69,6 +69,12 @@ their own profile predicts, not where they are slow in milliseconds.**
 Same-finger pairs are slow for everybody, so an absolute ranking hands every
 player the same list and no two runs would differ.
 
+The prediction asks two questions of the same data and multiplies the answers:
+what kind of movement is this, and which key does it land on (D30). The second
+was missing at first and it is the one that matters more. On the first real
+profile, movement class explained 2.9 percent of that player's transition times
+and the landing key explained 25.6.
+
 Its exit criterion is that two typists with different weaknesses receive visibly
 different challenge distributions without obvious repetitive drilling. The
 arithmetic half is now a test: two synthetic typists diverge at a total
@@ -79,11 +85,16 @@ question 9 and needs a person.
 
 ## Open questions
 
-- **Milestone 3 has never been played.** Everything about it is tuned by
-  argument and by measurement against synthetic typists.
-- A run's adaptation is only as good as the profile behind it, and the profile
-  on this machine is two runs old. The first genuinely adapted run is some way
-  off.
+- **Milestone 3 has never been played.** The first playtest of it was made on a
+  stale page still running the previous build, so nothing about how it feels is
+  known yet.
+- The landing key term comes from one real profile. The mechanism is generic and
+  switches itself off for a player it does not apply to, but the finding that
+  motivated it is one person's. See D30.
+- A starting-key effect survives in that profile even after movement class and
+  landing key are accounted for. Smaller, and deliberately not built yet.
+- Error rates are still modelled at the movement class level only. The landing
+  key term applies to timing alone.
 - The clock cap bounds when the finale starts, not when the run ends, so a
   slower run finishes a few seconds past ten minutes. Small, and recorded in
   `apps/web/test/stages.test.ts` rather than asserted away.
@@ -119,6 +130,11 @@ This file is the one status document that ships, and the README points at it.
 
 ## Latest change
 
+- Added a landing key term to the skill model after the first real profile
+  showed the movement classes explaining almost none of it. Held-out prediction
+  error falls from 34.9 percent to 31.2 overall and from 32.5 to 26.5 on the
+  affected pairs. A run now names the key rather than the pairs that reach it.
+  Recorded as D30, amending D24.
 - Built milestone 3, the adaptive director. A per-player skill model, four
   candidate buckets, a bucket mix that follows arena pressure, and caps against
   drilling. Recorded as D24 through D29.

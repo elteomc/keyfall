@@ -65,7 +65,7 @@ export {
 export type { DigramClass, Hand, KeyPosition } from './keyboard'
 export { DIGRAM_CLASSES, classifyDigram, keyDistance, keyPosition } from './keyboard'
 
-export type { DigramEstimate, SkillModelOptions, WordCost } from './skill'
+export type { DigramEstimate, LandingEstimate, SkillModelOptions, WordCost } from './skill'
 export { SkillModel } from './skill'
 
 export type {
