@@ -1,5 +1,6 @@
 import { type Observation, type PersonalBests, type Profile, lifetimeAccuracy } from '@keyfall/typing-core'
 
+import type { SelectorReport } from '../game/selector'
 import type { RunSession, RunSummary } from '../game/session'
 
 /** Everything the overlay needs that does not live on the session. */
@@ -172,6 +173,31 @@ function observationText(o: Observation): string {
   }
 }
 
+/**
+ * What the run chose to put in front of the player, in one or two sentences.
+ *
+ * Milestone 3's exit criterion asks for challenge distributions that are
+ * *visibly* different between players, and a distribution nobody can see is
+ * only half of that. It also answers the question a player will otherwise ask
+ * first, which is whether the game is doing anything at all.
+ *
+ * It says nothing when the run drew no weakness words, rather than reporting a
+ * zero. A run where the arena stayed busy is a run that never had a calm moment
+ * to teach in, which is the policy working rather than a result worth printing.
+ */
+function trainingLine(selection: SelectorReport): string {
+  if (!selection.adapting) {
+    return `<p class="training">Still learning how you type. Once enough of a profile has built up, the words a run picks will start answering it.</p>`
+  }
+
+  const trained = selection.trained.slice(0, 3)
+  if (trained.length === 0 || selection.counts.weakness === 0) return ''
+
+  const names = trained.map((t) => `<code>${t.digram.replace(' ', '')}</code>`).join(' and ')
+  const plural = selection.counts.weakness === 1 ? 'target was' : 'targets were'
+  return `<p class="training">${selection.counts.weakness} ${plural} chosen to put ${names} in front of you. Those are transitions where you are slower than the rest of your typing predicts.</p>`
+}
+
 function summaryCard(summary: RunSummary | null, context: OverlayContext): string {
   if (!summary) return '<section class="card"><h1>Run over</h1></section>'
 
@@ -215,6 +241,7 @@ function summaryCard(summary: RunSummary | null, context: OverlayContext): strin
         <div><dt>target acquisition</dt><dd>${acquisition}</dd></div>
       </dl>
       ${observations}
+      ${trainingLine(summary.selection)}
       <h2>Slowest well sampled transitions</h2>
       <ul class="transitions">${slowest}</ul>
       <p class="prompt">Press <kbd>Enter</kbd> to run again</p>

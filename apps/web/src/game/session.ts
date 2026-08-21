@@ -3,6 +3,7 @@ import {
   type ErrorPolicy,
   type EventRecorder,
   type Observation,
+  type Profile,
   type RunContribution,
   type TransitionStat,
   type TypingEvent,
@@ -11,6 +12,7 @@ import {
   accuracy,
   createRecorder,
   deriveObservations,
+  emptyProfile,
   interKeyIntervals,
   mean,
   errorSeverity,
@@ -20,9 +22,10 @@ import {
   wordsPerMinute,
 } from '@keyfall/typing-core'
 
-import { type Band, pickWord } from './corpus'
+import type { Band } from './corpus'
 import { Director } from './director'
 import { type Rng, createRng } from './rng'
+import { type SelectorReport, WordSelector } from './selector'
 import { wordScore } from './scoring'
 import {
   type RunStage,
@@ -120,6 +123,8 @@ export interface RunSummary {
   slowest: TransitionStat[]
   /** At most three, per section 12 of the product spec. */
   observations: Observation[]
+  /** What the adaptive selector asked of the player, and what it trained. */
+  selection: SelectorReport
 }
 
 interface Archetype {
@@ -234,6 +239,14 @@ export class RunSession {
   private comboTracker = new ComboTracker()
   private director = new Director()
   private transitions = new TransitionTable()
+  /**
+   * The stored profile, held so a run can be built against it.
+   *
+   * Empty until the game layer hands one over, because storage answers after
+   * the first frame and a run must be playable before it does.
+   */
+  private profile: Profile = emptyProfile(0)
+  private selector = new WordSelector(emptyProfile(0))
   private nextEnemyId = 1
   private spawnTimerMs = 0
   private nowMs = 0
@@ -261,12 +274,26 @@ export class RunSession {
 
   private summary: RunSummary | null = null
 
+  /**
+   * Takes the stored profile the next run should be built against.
+   *
+   * Called on load, on import and on erase. The run in progress is deliberately
+   * unaffected: the material a player is meeting should be explainable by what
+   * they knew when the run started, not by a write that landed halfway through
+   * it.
+   */
+  adoptProfile(profile: Profile): void {
+    this.profile = profile
+  }
+
   start(nowMs: number, seed = Math.floor(Math.random() * 2 ** 31)): void {
     this.rng = createRng(seed)
     this.recorder = createRecorder(`run-${seed}`)
     this.transitions = new TransitionTable()
     this.comboTracker = new ComboTracker()
     this.director = new Director()
+    // Built once per run and then held still. See the note on `SkillModel`.
+    this.selector = new WordSelector(this.profile)
 
     this.phase = 'playing'
     this.enemies = []
@@ -1014,7 +1041,12 @@ export class RunSession {
   private spawnOne(kind: EnemyKind, row: number): void {
     const archetype = ARCHETYPES[kind]
     const active = new Set(this.enemies.map((e) => e.word))
-    const word = pickWord(this.bandFor(archetype), this.rng, active)
+    const word = this.selector.next(
+      this.bandFor(archetype),
+      this.director.currentPressure(),
+      active,
+      this.rng,
+    )
 
     const y = -20 - row * 46
 
@@ -1117,6 +1149,7 @@ export class RunSession {
         slowest,
         rhythmSamples: this.rhythmSamples,
       }),
+      selection: this.selector.report(),
     }
   }
 }

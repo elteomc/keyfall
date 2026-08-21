@@ -61,3 +61,19 @@ export {
   lifetimeAccuracy,
   recordRun,
 } from './profile'
+
+export type { DigramClass, Hand, KeyPosition } from './keyboard'
+export { DIGRAM_CLASSES, classifyDigram, keyDistance, keyPosition } from './keyboard'
+
+export type { DigramEstimate, SkillModelOptions, WordCost } from './skill'
+export { SkillModel } from './skill'
+
+export type {
+  Bucket,
+  Candidate,
+  PoolOptions,
+  SelectOptions,
+  Selection,
+  SelectionHistory,
+} from './selection'
+export { BUCKETS, EMPTY_HISTORY, buildPool, selectCandidate } from './selection'

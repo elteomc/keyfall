@@ -1,12 +1,12 @@
-import type { Rng } from './rng'
-
 /**
  * Curated corpus in three length bands.
  *
- * The bands are the game's difficulty lever: short words price reaction, long
- * ones price sustained accuracy. The per-sequence metadata the adaptive
- * director wants (digram coverage, difficulty estimates, punctuation variants)
- * still belongs to milestone 3.
+ * The bands are the game's length lever: short words price reaction, long ones
+ * price sustained accuracy. Everything else about a word is decided per player
+ * rather than stored here, because difficulty is a property of the pair and not
+ * of the word. `selector.ts` and `typing-core/src/skill.ts` own that. What is
+ * still missing is punctuation, which section 21 question 7 wants settled by
+ * play before any of it is added.
  *
  * Size matters more than it looks. A six minute run destroys several hundred
  * words, so a small pool repeats within a single run, and repetition makes both
@@ -81,11 +81,3 @@ export const CORPUS: Record<Band, readonly string[]> = {
  * Picks a word from a band, avoiding anything already on screen. Repeats are
  * boring and they also make prefix ambiguity unreadable.
  */
-export function pickWord(band: Band, rng: Rng, exclude: ReadonlySet<string>): string {
-  const pool = CORPUS[band]
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const word = rng.pick(pool)
-    if (!exclude.has(word)) return word
-  }
-  return rng.pick(pool)
-}

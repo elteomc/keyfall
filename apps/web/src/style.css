@@ -144,6 +144,21 @@ body {
   color: var(--accent);
 }
 
+/* What the run chose for the player. Set apart from the observations, because
+   this describes the game's behaviour rather than the player's. */
+.training {
+  margin: 14px 0 0;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  border-left: 2px solid var(--accent);
+}
+
+.training code {
+  color: var(--accent);
+}
+
 .transitions {
   margin: 0;
   padding: 0;

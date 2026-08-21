@@ -40,9 +40,23 @@ let runStartedAtMs = Date.now()
 /** Personal bests the finished run beat, read before it was folded in. */
 let beaten: string[] = []
 
+/**
+ * Hands the session whatever profile is now current.
+ *
+ * The next run is built against it. The run in progress is not, so an import
+ * or an erase never changes the material under a player mid-run.
+ */
+function useProfile(next: Profile): void {
+  profile = next
+  session.adoptProfile(next)
+  renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+}
+
 void (async () => {
   store = await createProfileStore(Date.now())
-  profile = await store.load()
+  const loaded = await store.load()
+  session.adoptProfile(loaded)
+  profile = loaded
   if (session.phase !== 'playing') renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
 })()
 
@@ -57,10 +71,8 @@ async function keepRun(): Promise<void> {
   if (contribution === null) return
 
   beaten = beatenBests(profile.bests, contribution.record)
-  profile = recordRun(profile, contribution, Date.now())
-
   // The overlay is already on screen, so it is redrawn once the record lands.
-  renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+  useProfile(recordRun(profile, contribution, Date.now()))
 
   await store.save(profile)
   await store.saveEvents(contribution.record.runId, session.events())
@@ -87,8 +99,7 @@ function pickFile(): void {
       window.alert('That file is not a Keyfall profile.')
       return
     }
-    profile = imported
-    renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+    useProfile(imported)
   }
   input.click()
 }
@@ -171,9 +182,8 @@ window.addEventListener('keydown', (event) => {
       if (!window.confirm('Erase every stored run and statistic? This cannot be undone.')) return
       void (async () => {
         await store.clear()
-        profile = await store.load()
         beaten = []
-        renderOverlay(overlay, session, { profile, durable: store.durable, beaten })
+        useProfile(await store.load())
       })()
       return
     }
