@@ -75,17 +75,31 @@ const ARRIVAL_TAU_MS = 9000
 const MIN_CAPACITY_CPM = 60
 
 /**
- * The load that should read as the top of the band.
+ * The load range the target band stands for.
  *
- * Load fed the band directly at first, which meant arrivals were held between
- * 30 and 60 percent of the player's measured speed and the dial could never ask
- * for more than that. Playtesting called it exactly what it was: a slow trickle
- * that never responded to how fast you were going.
+ * Load is arrivals against the player's own measured speed, and these two
+ * numbers say what share of it the arena should be spending. Below `LOW` the
+ * player has slack and the dial climbs. Above `TOP` they are drowning and it
+ * eases off.
  *
- * Mapping the top of the band to a load near 1.0 puts arrivals between roughly
- * 48 and 95 percent of measured speed instead, so late in a run the arena is
- * genuinely asking for everything the player has.
+ * Both ends have now been wrong once, and the second time was worse.
+ *
+ * The first version fed load into the band raw, so the band stood for 30 to 60
+ * percent of the player's speed and the dial could never ask for more. The fix
+ * scaled the top of the band to a load near 1.0 and stopped there, which
+ * silently left the *floor* at 0.475. The dial was therefore content anywhere
+ * between 48 and 95 percent, a deadband spanning half of what the player could
+ * do.
+ *
+ * Measured on a real profile, that parked the dial at zero for nine minutes:
+ * arrivals settled at 51 percent of measured speed, which sat just inside the
+ * deadband, so nothing ever escalated. The whole run was drones, because every
+ * other archetype unlocks above intensity zero.
+ *
+ * Mapping both ends explicitly is what stops one of them drifting out of sight
+ * again.
  */
+const LOAD_AT_BAND_LOW = 0.7
 const LOAD_AT_BAND_TOP = 0.95
 
 /**
@@ -223,7 +237,13 @@ export class Director {
       ? this.arrivalChars / (this.arrivalWindowMs / 60000) / capacity
       : 0
 
-    return Math.max(crowding, clamp01((this.load * BAND_HIGH) / LOAD_AT_BAND_TOP))
+    // Both ends of the band are anchored to a load, so the reading is a
+    // straight line between them rather than a scale factor with a floor
+    // nobody chose.
+    const span = LOAD_AT_BAND_TOP - LOAD_AT_BAND_LOW
+    const fromLoad = BAND_LOW + ((this.load - LOAD_AT_BAND_LOW) / span) * (BAND_HIGH - BAND_LOW)
+
+    return Math.max(crowding, clamp01(fromLoad))
   }
 
   /**

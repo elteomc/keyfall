@@ -109,3 +109,50 @@ describe('Director', () => {
     expect(hard.speedScale).toBeGreaterThan(calm.speedScale)
   })
 })
+
+/**
+ * The band is anchored at both ends, and this is why.
+ *
+ * The floor drifted out of sight once already. Scaling only the top of the band
+ * left the bottom standing for a load of 0.475, so the dial was content
+ * anywhere between 48 and 95 percent of what the player could do. On a real
+ * profile that parked it at zero for nine minutes and the whole run was drones,
+ * because every other archetype unlocks above zero.
+ */
+describe('the load band', () => {
+  /** Feeds a steady arrival rate at a fixed capacity until the dial settles. */
+  function hold(load: number, seconds: number): Director {
+    const director = new Director()
+    const capacityCpm = 400
+    const perTick = (capacityCpm * load) / 60 / 62.5
+    for (let i = 0; i < seconds * 62.5; i++) {
+      director.update(16, {
+        enemies: 0,
+        nearestProgress: 0,
+        livesLost: 0,
+        charsArrived: perTick,
+        capacityCpm,
+      })
+    }
+    return director
+  }
+
+  test('half the player speed is coasting, and the dial climbs', () => {
+    const director = hold(0.5, 60)
+    expect(director.currentPressure()).toBeLessThan(0.3)
+    expect(director.level()).toBeGreaterThan(0.3)
+  })
+
+  test('inside the band nothing moves', () => {
+    const director = hold(0.82, 60)
+    expect(director.currentPressure()).toBeGreaterThan(0.3)
+    expect(director.currentPressure()).toBeLessThan(0.6)
+    expect(director.level()).toBe(0)
+  })
+
+  test('past the player speed the dial backs off', () => {
+    const director = hold(1.1, 60)
+    expect(director.currentPressure()).toBeGreaterThan(0.6)
+    expect(director.level()).toBe(0)
+  })
+})
